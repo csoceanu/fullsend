@@ -50,11 +50,11 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           path
           line
           originalLine
-          resolvedBy { login type }
-          comments(first: 10) {
+          resolvedBy { login }
+          comments(first: 100) {
             pageInfo { hasNextPage }
             nodes {
-              author { login type }
+              author { login __typename }
               body
               createdAt
             }
@@ -132,11 +132,15 @@ done
 #
 # For each matching thread, extract:
 #   - file, line, original_line from the thread
-#   - resolved_by and resolved_by_type from resolvedBy
+#   - resolved_by from resolvedBy.login
 #   - the first bot comment body (for snippet matching)
 #   - the last human comment body (the resolution rationale)
 #   - finding_id if present in the bot comment (<!-- finding:f_xxx -->)
 #   - resolution_context classification
+#
+# GitHub GraphQL has no Actor/User.type (that is REST). Bots are
+# __typename Bot on comment authors, and login ending in "[bot]" on
+# resolvedBy (typed User in the schema even for GitHub Apps).
 
 RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
   --arg bot "${REVIEW_BOT}" \
@@ -145,7 +149,7 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
     | select(.isResolved == true)
     | select(.resolvedBy != null)
     | select(.resolvedBy.login != $bot and .resolvedBy.login != $shared_bot)
-    | select(.resolvedBy.type == "User")
+    | select((.resolvedBy.login | endswith("[bot]")) | not)
     | select((.comments.nodes // [] | length) > 0)
     | select((.comments.pageInfo.hasNextPage // false) == false)
     | {
@@ -153,7 +157,6 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
         line: .line,
         original_line: .originalLine,
         resolved_by: .resolvedBy.login,
-        resolved_by_type: .resolvedBy.type,
         bot_finding_snippet: (
           [.comments.nodes[] | select(.author.login == $bot or .author.login == $shared_bot)]
           | first // null
@@ -165,12 +168,12 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
           | if . then (.body | capture("<!-- finding:(?<id>[a-zA-Z0-9_]+) -->") // null | .id // null) else null end
         ),
         human_response: (
-          [.comments.nodes[] | select(.author.login != $bot and .author.login != $shared_bot and .author.type == "User")]
+          [.comments.nodes[] | select(.author.login != $bot and .author.login != $shared_bot and .author.__typename == "User")]
           | last // null
           | if . then (.body | .[0:500]) else null end
         ),
         resolution_context: (
-          if ([.comments.nodes[] | select(.author.login != $bot and .author.login != $shared_bot and .author.type == "User")] | length) > 0
+          if ([.comments.nodes[] | select(.author.login != $bot and .author.login != $shared_bot and .author.__typename == "User")] | length) > 0
           then "explicit_dismissal"
           else "silent_resolution"
           end
@@ -182,7 +185,7 @@ THREAD_COUNT=$(echo "${nodes_json}" | jq 'length' 2>/dev/null) || THREAD_COUNT=0
 RESOLVED_COUNT=$(echo "${RESOLVED_THREADS}" | jq 'length' 2>/dev/null) || RESOLVED_COUNT=0
 
 # --- Write output ---
-jq -n \
+if ! jq -n \
   --argjson threads "${RESOLVED_THREADS}" \
   --argjson pr_num "${PR_NUM}" \
   --arg repo "${SOURCE_REPO}" \
@@ -198,7 +201,10 @@ jq -n \
       human_resolved_count: $resolved_count,
       fetched_at: $fetched_at
     }
-  }' > "${OUTPUT_FILE}"
+  }' > "${OUTPUT_FILE}"; then
+  echo "::warning::Failed to write resolved-threads file — writing empty resolved-threads file"
+  echo '{"resolved_threads":[],"metadata":{"error":"write_failed"}}' > "${OUTPUT_FILE}"
+fi
 
 echo "Resolved threads: ${RESOLVED_COUNT} human-resolved out of ${THREAD_COUNT} total"
 echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
