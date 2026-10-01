@@ -376,6 +376,59 @@ run_test "other-bot-resolved-excluded" \
   "$(make_graphql_response "${THREAD_DEPENDABOT_RESOLVED}")" \
   0
 
+# 13. Resolver's comment is used, not another human's.
+#     Bob comments but Alice resolves — human_response should be from
+#     Alice (the resolver), and if Alice didn't comment it's silent.
+THREAD_DIFFERENT_COMMENTER='[{
+  "id": "T_13",
+  "isResolved": true,
+  "path": "g.go",
+  "line": 15,
+  "originalLine": 15,
+  "resolvedBy": {"login": "alice", "__typename": "User"},
+  "comments": {
+    "pageInfo": {"hasNextPage": false},
+    "nodes": [
+      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: something wrong", "createdAt": "2026-09-01T10:00:00Z"},
+      {"author": {"login": "bob", "__typename": "User"}, "body": "I will fix this.", "createdAt": "2026-09-01T11:00:00Z"}
+    ]
+  }
+}]'
+
+run_test "different-commenter-silent-resolution" \
+  "$(make_graphql_response "${THREAD_DIFFERENT_COMMENTER}")" \
+  1 \
+  '.resolved_threads[0].resolution_context == "silent_resolution" and .resolved_threads[0].human_response == null'
+
+# 14. Resolver left a comment — should be explicit_dismissal with their text.
+THREAD_RESOLVER_COMMENTED='[{
+  "id": "T_14",
+  "isResolved": true,
+  "path": "h.go",
+  "line": 20,
+  "originalLine": 20,
+  "resolvedBy": {"login": "alice", "__typename": "User"},
+  "comments": {
+    "pageInfo": {"hasNextPage": false},
+    "nodes": [
+      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: issue here", "createdAt": "2026-09-01T10:00:00Z"},
+      {"author": {"login": "bob", "__typename": "User"}, "body": "I think this is fine.", "createdAt": "2026-09-01T10:30:00Z"},
+      {"author": {"login": "alice", "__typename": "User"}, "body": "Intentional, closing.", "createdAt": "2026-09-01T11:00:00Z"}
+    ]
+  }
+}]'
+
+run_test "resolver-commented-explicit-dismissal" \
+  "$(make_graphql_response "${THREAD_RESOLVER_COMMENTED}")" \
+  1 \
+  '.resolved_threads[0].resolution_context == "explicit_dismissal" and .resolved_threads[0].human_response == "Intentional, closing."'
+
+# 15. Metadata includes truncated flag (false when under page cap).
+run_test "metadata-truncated-false" \
+  "$(make_graphql_response "${THREAD_HUMAN_RESOLVED}")" \
+  1 \
+  '.metadata.truncated == false'
+
 # --- Summary ---
 
 echo ""

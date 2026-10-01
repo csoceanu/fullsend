@@ -70,11 +70,13 @@ cursor=""
 has_next="true"
 page=0
 nodes_json="[]"
+truncated="false"
 
 while [[ "${has_next}" == "true" ]]; do
   page=$((page + 1))
   if [[ "${page}" -gt 20 ]]; then
     echo "::warning::Resolved-threads pagination hit page cap — remaining threads skipped"
+    truncated="true"
     break
   fi
 
@@ -134,9 +136,11 @@ done
 #   - file, line, original_line from the thread
 #   - resolved_by from resolvedBy.login
 #   - the first bot comment body (for snippet matching)
-#   - the last human comment body (the resolution rationale)
+#   - the resolver's last comment (the resolution rationale) — only
+#     comments from the resolvedBy user count, not any human
 #   - finding_id if present in the bot comment (<!-- finding:f_xxx -->)
-#   - resolution_context classification
+#   - resolution_context classification: explicit_dismissal when the
+#     resolver left a comment, silent_resolution otherwise
 #
 # GitHub GraphQL has no Actor/User.type (that is REST). Bots are
 # __typename Bot on comment authors, and login ending in "[bot]" on
@@ -152,11 +156,12 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
     | select((.resolvedBy.login | endswith("[bot]")) | not)
     | select((.comments.nodes // [] | length) > 0)
     | select((.comments.pageInfo.hasNextPage // false) == false)
+    | .resolvedBy.login as $resolver
     | {
         file: .path,
         line: .line,
         original_line: .originalLine,
-        resolved_by: .resolvedBy.login,
+        resolved_by: $resolver,
         bot_finding_snippet: (
           [.comments.nodes[] | select(.author.login == $bot or .author.login == $shared_bot)]
           | first // null
@@ -168,12 +173,12 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
           | if . then (.body | capture("<!-- finding:(?<id>[a-zA-Z0-9_]+) -->") // null | .id // null) else null end
         ),
         human_response: (
-          [.comments.nodes[] | select(.author.login != $bot and .author.login != $shared_bot and .author.__typename == "User")]
+          [.comments.nodes[] | select(.author.login == $resolver)]
           | last // null
           | if . then (.body | .[0:500]) else null end
         ),
         resolution_context: (
-          if ([.comments.nodes[] | select(.author.login != $bot and .author.login != $shared_bot and .author.__typename == "User")] | length) > 0
+          if ([.comments.nodes[] | select(.author.login == $resolver)] | length) > 0
           then "explicit_dismissal"
           else "silent_resolution"
           end
@@ -191,6 +196,7 @@ if ! jq -n \
   --arg repo "${SOURCE_REPO}" \
   --argjson thread_count "${THREAD_COUNT}" \
   --argjson resolved_count "${RESOLVED_COUNT}" \
+  --argjson truncated "${truncated}" \
   --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{
     resolved_threads: $threads,
@@ -199,6 +205,7 @@ if ! jq -n \
       repo: $repo,
       thread_count: $thread_count,
       human_resolved_count: $resolved_count,
+      truncated: $truncated,
       fetched_at: $fetched_at
     }
   }' > "${OUTPUT_FILE}"; then
