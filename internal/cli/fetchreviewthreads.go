@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -39,7 +38,7 @@ func newFetchReviewThreadsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return json.NewEncoder(os.Stdout).Encode(threads)
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(threads)
 		},
 	}
 

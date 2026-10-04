@@ -471,6 +471,13 @@ func TestMinimizeComment(t *testing.T) {
 	require.ErrorIs(t, err, forge.ErrNotSupported)
 }
 
+func TestListPullRequestReviewThreads_NotSupported(t *testing.T) {
+	client, _ := setupTest(t)
+
+	_, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
+	require.ErrorIs(t, err, forge.ErrNotSupported)
+}
+
 // ---------------------------------------------------------------------------
 // mr.go tests
 // ---------------------------------------------------------------------------
