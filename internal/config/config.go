@@ -254,7 +254,7 @@ type CommentNotificationConfig struct {
 
 // ReactionNotificationConfig controls start/completion emoji reactions.
 // Reactions are the default status signal — they convey agent lifecycle
-// without generating GitHub notifications or timeline noise (AISDLC-118).
+// without generating GitHub notifications or timeline noise.
 // Valid start values: "enabled" (default), "disabled".
 // Valid completion values: "enabled" (default), "on_failure", "disabled".
 type ReactionNotificationConfig struct {

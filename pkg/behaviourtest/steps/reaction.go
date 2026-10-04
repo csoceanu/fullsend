@@ -36,6 +36,13 @@ func givenReactionsEnabled(w *world.World) error {
 	if err != nil {
 		return fmt.Errorf("parsing config: %w", err)
 	}
+	if !w.ReactionNotificationsOverridden {
+		if original := cfg.StatusNotifications(); original != nil {
+			copy := *original
+			w.ReactionNotificationsOriginal = &copy
+		}
+		w.ReactionNotificationsOverridden = true
+	}
 	cfg.SetStatusNotifications(&config.StatusNotificationConfig{
 		Comment: config.CommentNotificationConfig{
 			Start:      "enabled",
@@ -56,13 +63,10 @@ func givenReactionsEnabled(w *world.World) error {
 	return nil
 }
 
-// DisableReactionNotifications explicitly disables all status
-// notifications in the enrolled repo's config.yaml. Exported so
-// CleanupScenario can call it during scenario teardown.
-//
-// Sets explicit "disabled" values rather than removing the block,
-// because the empty default enables reactions.
-func DisableReactionNotifications(w *world.World) error {
+// RestoreReactionNotifications restores the repository's pre-scenario
+// status notification configuration. Exported so CleanupScenario can call it
+// during scenario teardown without leaking settings to a pooled repository.
+func RestoreReactionNotifications(w *world.World) error {
 	cfgPath := filepath.Join(".fullsend", "config.yaml")
 	cfgData, err := w.SCM.GetFileContent(context.Background(), w.Org, w.RepoName, cfgPath)
 	if err != nil {
@@ -72,19 +76,16 @@ func DisableReactionNotifications(w *world.World) error {
 	if err != nil {
 		return fmt.Errorf("parsing config: %w", err)
 	}
-	cfg.SetStatusNotifications(&config.StatusNotificationConfig{
-		Reaction: config.ReactionNotificationConfig{
-			Start:      "disabled",
-			Completion: "disabled",
-		},
-	})
+	cfg.SetStatusNotifications(w.ReactionNotificationsOriginal)
 	merged, err := cfg.Marshal()
 	if err != nil {
 		return err
 	}
-	if err := w.SCM.CommitFile(context.Background(), w.Org, w.RepoName, cfgPath, "behaviour: disable reaction notifications", merged); err != nil {
+	if err := w.SCM.CommitFile(context.Background(), w.Org, w.RepoName, cfgPath, "behaviour: restore status notifications", merged); err != nil {
 		return fmt.Errorf("updating config: %w", err)
 	}
+	w.ReactionNotificationsOverridden = false
+	w.ReactionNotificationsOriginal = nil
 	return nil
 }
 
@@ -122,27 +123,4 @@ func thenIssueDoesNotHaveReaction(w *world.World, content string) error {
 		}
 	}
 	return nil
-}
-
-// reactionsEnabledInConfig checks if status_notifications.reaction is
-// set in the repo config. Used by cleanup to decide whether to reset.
-func reactionsEnabledInConfig(w *world.World) bool {
-	if w.SCM == nil || w.Org == "" || w.RepoName == "" {
-		return false
-	}
-	cfgPath := filepath.Join(".fullsend", "config.yaml")
-	cfgData, err := w.SCM.GetFileContent(context.Background(), w.Org, w.RepoName, cfgPath)
-	if err != nil {
-		return false
-	}
-	cfg, err := config.ParsePerRepoConfigWriter(cfgData)
-	if err != nil {
-		return false
-	}
-	sn := cfg.StatusNotifications()
-	if sn == nil {
-		return false
-	}
-	return (sn.Reaction.Start != "" && sn.Reaction.Start != "disabled") ||
-		(sn.Reaction.Completion != "" && sn.Reaction.Completion != "disabled")
 }

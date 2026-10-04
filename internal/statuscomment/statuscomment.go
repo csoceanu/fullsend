@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/fullsend-ai/fullsend/internal/config"
+	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/fullsend-ai/fullsend/internal/tracker"
 )
 
@@ -196,9 +197,16 @@ func commentEnabled(val string) bool {
 // reactionEnabled reports whether a reaction setting is turned on. The
 // empty value means enabled: reactions are the default status signal,
 // replacing comments that generated noisy timeline entries and
-// notifications (AISDLC-118).
+// notifications.
 func reactionEnabled(val string) bool {
 	return val == "" || val == "enabled"
+}
+
+// commentFallbackEnabled reports whether comments may be used when the
+// tracker cannot support reactions. An omitted value preserves lifecycle
+// visibility on non-GitHub trackers; an explicit disabled value is honored.
+func commentFallbackEnabled(val string) bool {
+	return val != "disabled"
 }
 
 // isFailureStatus reports whether status represents a non-success outcome,
@@ -262,6 +270,10 @@ func (n *Notifier) PostStart(ctx context.Context, description string) error {
 			return nil
 		}
 	}
+	if postReaction && n.reactor == nil && commentFallbackEnabled(n.cfg.Comment.Start) && n.cfg.Comment.Completion != "on_failure" {
+		postComment = true
+		postReaction = false
+	}
 
 	if postComment {
 		body := n.buildStartBody(description)
@@ -275,6 +287,15 @@ func (n *Notifier) PostStart(ctx context.Context, description string) error {
 	if postReaction {
 		id, err := n.addReaction(ctx, "eyes")
 		if err != nil {
+			if forge.IsNotSupported(err) && commentFallbackEnabled(n.cfg.Comment.Start) && n.cfg.Comment.Completion != "on_failure" {
+				body := n.buildStartBody(description)
+				comment, commentErr := createStatusComment(ctx, n.client, n.project, n.number, tracker.Body(body), n.marker, false)
+				if commentErr != nil {
+					return fmt.Errorf("posting fallback start comment: %w", commentErr)
+				}
+				n.startCommentID = comment.ID
+				return nil
+			}
 			// Fail open: a reaction is a nice-to-have signal, not something
 			// that should abort the agent run.
 			n.warnf("failed to add start reaction: %v", err)
@@ -345,6 +366,10 @@ func (n *Notifier) PostCompletionWithDetail(ctx context.Context, description, st
 	cleanupComment := !postComment && n.startCommentID != ""
 	cleanupReaction := n.startReactionID != 0
 	postReaction := shouldPostReactionCompletion(n.cfg.Reaction.Completion, status)
+	if postReaction && n.reactor == nil && commentFallbackEnabled(n.cfg.Comment.Completion) {
+		postComment = true
+		postReaction = false
+	}
 
 	if postComment || cleanupComment || cleanupReaction || postReaction {
 		if err := n.refreshClient(ctx); err != nil {
@@ -361,7 +386,14 @@ func (n *Notifier) PostCompletionWithDetail(ctx context.Context, description, st
 		// clean up the start comment so it doesn't remain orphaned in its
 		// "Started" state. Reactions have no equivalent "orphaned" risk, so
 		// the swap can happen unconditionally here.
-		n.postCompletionReaction(ctx, status, cleanupReaction, postReaction)
+		unsupported := n.postCompletionReaction(ctx, status, cleanupReaction, postReaction)
+		if unsupported && commentFallbackEnabled(n.cfg.Comment.Completion) &&
+			(n.cfg.Comment.Completion == "" || shouldPostCompletion(n.cfg.Comment.Completion, status)) {
+			body := n.buildCompletionBody(description, status, detail, completionTime)
+			if _, err := createStatusComment(ctx, n.client, n.project, n.number, tracker.Body(body), n.marker, true); err != nil {
+				return fmt.Errorf("posting fallback completion comment: %w", err)
+			}
+		}
 		if cleanupComment {
 			if err := n.client.DeleteComment(ctx, n.project, n.number, n.startCommentID); err != nil {
 				n.warnf("failed to delete start comment when completion suppressed: %v", err)
@@ -431,18 +463,22 @@ func updateStatusComment(ctx context.Context, client tracker.Client, project str
 // reaction around across this swap. Errors are logged, not returned: a
 // reaction is a nice-to-have signal, not something that should fail the
 // run. Assumes the caller has already refreshed n.client if needed.
-func (n *Notifier) postCompletionReaction(ctx context.Context, status string, cleanup, post bool) {
+func (n *Notifier) postCompletionReaction(ctx context.Context, status string, cleanup, post bool) bool {
+	unsupported := false
 	if cleanup {
 		if err := n.deleteReaction(ctx, n.startReactionID); err != nil {
+			unsupported = forge.IsNotSupported(err)
 			n.warnf("failed to remove start reaction: %v", err)
 		}
 		n.startReactionID = 0
 	}
 	if post {
 		if _, err := n.addReaction(ctx, reactionForStatus(status)); err != nil {
+			unsupported = unsupported || forge.IsNotSupported(err)
 			n.warnf("failed to add completion reaction: %v", err)
 		}
 	}
+	return unsupported
 }
 
 // analyzeTimeline lists comments and determines two things:

@@ -111,6 +111,13 @@ type World struct {
 	RuntimeOverridden bool
 	RuntimeOriginal   string
 
+	// ReactionNotificationsOverridden records that a scenario changed the
+	// repository's status notification settings. The original value is
+	// restored during cleanup so pooled repositories do not leak config into
+	// later scenarios.
+	ReactionNotificationsOverridden bool
+	ReactionNotificationsOriginal   *config.StatusNotificationConfig
+
 	// AllowedResourcesOverridden records that this scenario modified
 	// allowed_remote_resources in config.yaml; AllowedResourcesOriginal
 	// holds the pre-scenario value. CleanupScenario restores it so the

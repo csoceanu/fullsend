@@ -82,6 +82,28 @@ func TestCleanupScenario_SkipsForkCleanupWhenNotSet(t *testing.T) {
 	assert.Empty(t, scmDriver.closedIssues)
 }
 
+func TestRestoreReactionNotifications_RestoresOriginalConfig(t *testing.T) {
+	original := &config.StatusNotificationConfig{
+		Comment:  config.CommentNotificationConfig{Start: "enabled", Completion: "on_failure"},
+		Reaction: config.ReactionNotificationConfig{Start: "disabled", Completion: "disabled"},
+	}
+	scmDriver := &fakeCleanupSCM{fileContent: []byte("roles: [review]\nstatus_notifications:\n  comment:\n    start: enabled\n  reaction:\n    start: enabled\n")}
+	w := &world.World{
+		Org:                             "org",
+		RepoName:                        "repo",
+		SCM:                             scmDriver,
+		ReactionNotificationsOriginal:   original,
+		ReactionNotificationsOverridden: true,
+	}
+
+	require.NoError(t, RestoreReactionNotifications(w))
+	assert.True(t, scmDriver.commitFileCalled)
+	assert.Contains(t, string(scmDriver.committedContent), "completion: on_failure")
+	assert.Contains(t, string(scmDriver.committedContent), "start: disabled")
+	assert.False(t, w.ReactionNotificationsOverridden)
+	assert.Nil(t, w.ReactionNotificationsOriginal)
+}
+
 func TestCleanupScenario_DeletesForkBranch(t *testing.T) {
 	t.Parallel()
 
@@ -431,6 +453,7 @@ type fakeCleanupSCM struct {
 	deleteRepoErr    error
 	commitFileCalled bool
 	commitFileErr    error
+	committedContent []byte
 	fileContent      []byte
 	getFileErr       error
 	openPRs          []forge.ChangeProposal
@@ -503,8 +526,9 @@ func (f *fakeCleanupSCM) GetFileContentAtRef(context.Context, string, string, st
 	return f.fileContent, f.getFileErr
 }
 
-func (f *fakeCleanupSCM) CommitFile(_ context.Context, _, _, _, _ string, _ []byte) error {
+func (f *fakeCleanupSCM) CommitFile(_ context.Context, _, _, _, _ string, content []byte) error {
 	f.commitFileCalled = true
+	f.committedContent = append([]byte(nil), content...)
 	return f.commitFileErr
 }
 

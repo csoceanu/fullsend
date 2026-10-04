@@ -27,6 +27,10 @@ func newTestNotifier(fc *forge.FakeClient, cfg config.StatusNotificationConfig) 
 	return n, fc
 }
 
+// nonReactingClient models Jira and other trackers that implement the base
+// tracker client but do not support issue-level reactions.
+type nonReactingClient struct{ tracker.Client }
+
 func TestPostStart_CommentEnabled(t *testing.T) {
 	fc := forge.NewFakeClient()
 	cfg := config.StatusNotificationConfig{
@@ -69,6 +73,22 @@ func TestPostStart_DefaultDisabled(t *testing.T) {
 	assert.Empty(t, fc.IssueComments, "comments are disabled by default; reactions are the default signal")
 	require.Len(t, fc.AddedReactions, 1, "default config enables reactions")
 	assert.Equal(t, "eyes", fc.AddedReactions[0].Content)
+}
+
+func TestPostStart_DefaultFallsBackToCommentWithoutReactor(t *testing.T) {
+	fc := forge.NewFakeClient()
+	fc.AuthenticatedUser = "fullsend-bot[bot]"
+	base := tracker.NewForgeClient(fc)
+	n := New(nonReactingClient{Client: base}, config.StatusNotificationConfig{}, "org/repo", 7,
+		"https://ci/run/42", "a1b2c3d4e5f6789", "run-42")
+	n.now = fixedTime
+
+	require.NoError(t, n.PostStart(context.Background(), "Working"))
+	require.Len(t, fc.IssueComments["org/repo/7"], 1)
+	assert.Empty(t, fc.AddedReactions)
+
+	require.NoError(t, n.PostCompletion(context.Background(), "Working", "success"))
+	assert.Len(t, fc.UpdatedComments, 1)
 }
 
 func TestPostCompletion_EditInPlace(t *testing.T) {
@@ -1890,6 +1910,66 @@ func TestPostStart_ReactionErrorIsNonFatal(t *testing.T) {
 
 	err := n.PostStart(context.Background(), "Working")
 	require.NoError(t, err, "a failed reaction should not fail the run")
+}
+
+func TestPostStart_UnsupportedReactionFallsBackToComment(t *testing.T) {
+	fc := forge.NewFakeClient()
+	fc.Errors["AddIssueReaction"] = forge.ErrNotSupported
+	cfg := config.StatusNotificationConfig{}
+	n, fc := newTestNotifier(fc, cfg)
+
+	require.NoError(t, n.PostStart(context.Background(), "Working"))
+	require.Len(t, fc.IssueComments["org/repo/7"], 1)
+	assert.Empty(t, fc.AddedReactions)
+}
+
+func TestPostCompletion_UnsupportedReactionFallsBackToComment(t *testing.T) {
+	fc := forge.NewFakeClient()
+	fc.Errors["AddIssueReaction"] = forge.ErrNotSupported
+	n, fc := newTestNotifier(fc, config.StatusNotificationConfig{})
+
+	require.NoError(t, n.PostStart(context.Background(), "Working"))
+	require.NoError(t, n.PostCompletion(context.Background(), "Working", "success"))
+
+	comments := fc.IssueComments["org/repo/7"]
+	require.Len(t, comments, 1)
+	assert.Contains(t, comments[0].Body, "✅ Success")
+	assert.Empty(t, fc.AddedReactions)
+}
+
+func TestPostStart_UnsupportedReactionFallbackError(t *testing.T) {
+	fc := forge.NewFakeClient()
+	fc.Errors["AddIssueReaction"] = forge.ErrNotSupported
+	fc.Errors["CreateIssueComment"] = fmt.Errorf("comment API down")
+	n, _ := newTestNotifier(fc, config.StatusNotificationConfig{})
+
+	err := n.PostStart(context.Background(), "Working")
+	require.EqualError(t, err, "posting fallback start comment: comment API down")
+}
+
+func TestPostCompletion_UnsupportedReactionFallbackError(t *testing.T) {
+	fc := forge.NewFakeClient()
+	n, fc := newTestNotifier(fc, config.StatusNotificationConfig{})
+
+	require.NoError(t, n.PostStart(context.Background(), "Working"))
+	fc.Errors["AddIssueReaction"] = forge.ErrNotSupported
+	fc.Errors["CreateIssueComment"] = fmt.Errorf("comment API down")
+
+	err := n.PostCompletion(context.Background(), "Working", "success")
+	require.EqualError(t, err, "posting fallback completion comment: comment API down")
+}
+
+func TestPostCompletion_UnsupportedReactionCleanupFallsBackToComment(t *testing.T) {
+	fc := forge.NewFakeClient()
+	n, fc := newTestNotifier(fc, config.StatusNotificationConfig{})
+
+	require.NoError(t, n.PostStart(context.Background(), "Working"))
+	fc.Errors["DeleteIssueReaction"] = forge.ErrNotSupported
+
+	require.NoError(t, n.PostCompletion(context.Background(), "Working", "success"))
+	comments := fc.IssueComments["org/repo/7"]
+	require.Len(t, comments, 1)
+	assert.Contains(t, comments[0].Body, "✅ Success")
 }
 
 // A comment API failure should leave the start reaction in place rather

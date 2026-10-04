@@ -385,8 +385,10 @@ Use `--update` to force re-resolution even if the lock entry appears current.
 
 ### Status notification flags
 
-When running agents locally you can optionally enable status comments on the
-target issue/PR. These flags mirror what the CI workflows pass automatically:
+When running agents locally you can configure lifecycle status notifications on
+the target issue/PR. GitHub runs use emoji reactions by default; GitLab and
+Jira runs fall back to status comments when reactions are unsupported. These
+flags mirror what the CI workflows pass automatically:
 
 | Flag | Description |
 |------|-------------|
@@ -413,7 +415,7 @@ fullsend run triage \
 
 For GitLab repositories, use `--forge gitlab` instead of `--mint-url`. The agent resolves its credential through the [GitLab role-credential contract](../../contributing/gitlab-role-credentials.md) and exports `GITLAB_TOKEN` (and `PUSH_TOKEN`, for roles with repository-write access) itself; it does not require the mint service. Set the matching per-role secret (Poller/Analyst/Coder, or a registered custom role). A missing role secret fails closed and does not fall back to `FULLSEND_FORGE_TOKEN` or a directly-set `GITLAB_TOKEN`. See the [operations guide](../getting-started/operations.md#gitlab-ci) for required environment variables. Self-hosted instances that use a private CA have a separate [certificate-provisioning contract](../getting-started/operations.md#private-ca-self-hosted-gitlab).
 
-Status comment behavior is configured via `status_notifications` in
+Status notification behavior is configured via `status_notifications` in
 `config.yaml`. See [Status Notifications](customizing-agents.md#status-notifications).
 
 ## Run from a container

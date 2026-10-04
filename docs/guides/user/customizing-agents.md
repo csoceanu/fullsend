@@ -466,7 +466,10 @@ a custom role, see [Custom Agent Identity](custom-agent-identity.md).
 
 Agent workflows signal status on issues and PRs when they start and complete. By default, agents use **emoji reactions** — a lightweight signal that does not generate GitHub notifications or clutter the PR timeline.
 
-To switch to status comments instead (the previous default), set `status_notifications` in `.fullsend/config.yaml`:
+To opt into status comments:
+
+1. Open `.fullsend/config.yaml`.
+2. Add or update the `status_notifications.comment` block:
 
 ```yaml
 status_notifications:
@@ -478,7 +481,12 @@ status_notifications:
     completion: disabled
 ```
 
-When `status_notifications` is omitted entirely, comments default to disabled and reactions default to enabled.
+3. Keep the reaction values disabled if you want comments to be the only
+   lifecycle signal.
+
+When `status_notifications` is omitted entirely, comments default to disabled
+and reactions default to enabled on GitHub. On GitLab and Jira, unsupported
+reactions fall back to comments unless comments are explicitly disabled.
 
 ### Reactions
 
@@ -507,8 +515,9 @@ Because reactions carry no notification cost, `on_failure` here simply means "le
 
 **Known limitations:**
 
-- Reactions are currently GitHub-only. Enabling `reaction.*` on a GitLab-backed repo is silently a no-op today ([#5998](https://github.com/fullsend-ai/fullsend/issues/5998)). With the new defaults, GitLab orgs receive no status signal unless they opt comments back on.
+- Reactions are currently GitHub-only. On GitLab and Jira-backed runs, fullsend falls back to status comments when reactions are unsupported ([#5998](https://github.com/fullsend-ai/fullsend/issues/5998)). Explicitly setting `comment.*: disabled` still suppresses the fallback.
 - If a run is hard-killed before it can post its completion reaction, the start reaction (👀) can be left behind indefinitely — unlike status comments, there's no out-of-process reconciler for orphaned reactions yet.
+- In the default emoji-only mode, a crash before any status comment exists cannot be represented by `ReconcileOrphaned`; enable completion comments when that failure signal is required.
 
 ### Comments
 
