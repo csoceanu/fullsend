@@ -3634,6 +3634,140 @@ func (c *LiveClient) ListPullRequestReviews(ctx context.Context, owner, repo str
 	return result, nil
 }
 
+// ListPullRequestReviewThreads returns the pull request's review threads and
+// their comments through GitHub's GraphQL API. GitHub exposes review threads
+// only through GraphQL, so keeping this operation here prevents callers from
+// bypassing the forge abstraction with a raw `gh api` invocation.
+func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, repo string, number int) (forge.ReviewThreadPage, error) {
+	const query = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+		repository(owner: $owner, name: $name) {
+			pullRequest(number: $number) {
+				reviewThreads(first: 100, after: $cursor) {
+					pageInfo { hasNextPage endCursor }
+					nodes {
+						id
+						isResolved
+						path
+						line
+						originalLine
+						resolvedBy { login }
+						comments(first: 100) {
+							pageInfo { hasNextPage }
+							nodes {
+								author { login __typename }
+								body
+								createdAt
+							}
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	type gqlThread struct {
+		ID           string `json:"id"`
+		IsResolved   bool   `json:"isResolved"`
+		Path         string `json:"path"`
+		Line         *int   `json:"line"`
+		OriginalLine *int   `json:"originalLine"`
+		ResolvedBy   *struct {
+			Login string `json:"login"`
+		} `json:"resolvedBy"`
+		Comments struct {
+			PageInfo struct {
+				HasNextPage bool `json:"hasNextPage"`
+			} `json:"pageInfo"`
+			Nodes []struct {
+				Author struct {
+					Login string `json:"login"`
+					Type  string `json:"__typename"`
+				} `json:"author"`
+				Body      string `json:"body"`
+				CreatedAt string `json:"createdAt"`
+			} `json:"nodes"`
+		} `json:"comments"`
+	}
+
+	type gqlResult struct {
+		Data struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewThreads struct {
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+						Nodes []gqlThread `json:"nodes"`
+					} `json:"reviewThreads"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	result := forge.ReviewThreadPage{}
+	var cursor *string
+	for page := 1; page <= 20; page++ {
+		variables := map[string]any{
+			"owner":  owner,
+			"name":   repo,
+			"number": number,
+			"cursor": cursor,
+		}
+		resp, err := c.post(ctx, "/graphql", map[string]any{"query": query, "variables": variables})
+		if err != nil {
+			return forge.ReviewThreadPage{}, fmt.Errorf("list pull request review threads page %d: %w", page, err)
+		}
+		var decoded gqlResult
+		if err := decodeJSON(resp, &decoded); err != nil {
+			return forge.ReviewThreadPage{}, fmt.Errorf("decode pull request review threads page %d: %w", page, err)
+		}
+		if len(decoded.Errors) > 0 {
+			return forge.ReviewThreadPage{}, fmt.Errorf("list pull request review threads: %s", decoded.Errors[0].Message)
+		}
+
+		threads := decoded.Data.Repository.PullRequest.ReviewThreads
+		for _, thread := range threads.Nodes {
+			converted := forge.ReviewThread{
+				ID:                thread.ID,
+				IsResolved:        thread.IsResolved,
+				Path:              thread.Path,
+				Line:              thread.Line,
+				OriginalLine:      thread.OriginalLine,
+				CommentsTruncated: thread.Comments.PageInfo.HasNextPage,
+			}
+			if thread.ResolvedBy != nil {
+				converted.ResolvedBy = thread.ResolvedBy.Login
+			}
+			for _, comment := range thread.Comments.Nodes {
+				converted.Comments = append(converted.Comments, forge.ReviewThreadComment{
+					Author:     comment.Author.Login,
+					AuthorType: comment.Author.Type,
+					Body:       comment.Body,
+					CreatedAt:  comment.CreatedAt,
+				})
+			}
+			result.Threads = append(result.Threads, converted)
+		}
+
+		if !threads.PageInfo.HasNextPage {
+			break
+		}
+		if threads.PageInfo.EndCursor == "" {
+			return forge.ReviewThreadPage{}, fmt.Errorf("list pull request review threads page %d: missing pagination cursor", page)
+		}
+		next := threads.PageInfo.EndCursor
+		cursor = &next
+		if page == 20 {
+			result.Truncated = true
+		}
+	}
+	return result, nil
+}
+
 // DismissPullRequestReview dismisses a review, changing its state to DISMISSED.
 func (c *LiveClient) DismissPullRequestReview(ctx context.Context, owner, repo string, number, reviewID int, message string) error {
 	payload := map[string]string{

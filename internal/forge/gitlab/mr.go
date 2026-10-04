@@ -770,6 +770,13 @@ func (c *LiveClient) ListPullRequestReviews(ctx context.Context, owner, repo str
 	return result, nil
 }
 
+// ListPullRequestReviewThreads is not available as a portable GitLab
+// equivalent. GitLab discussions do not expose the GitHub review-thread
+// resolution contract used by the review agent.
+func (c *LiveClient) ListPullRequestReviewThreads(_ context.Context, _ string, _ string, _ int) (forge.ReviewThreadPage, error) {
+	return forge.ReviewThreadPage{}, forge.ErrNotSupported
+}
+
 // DismissPullRequestReview dismisses a review on a merge request.
 //
 // On GitLab, if the review was an approval, this unapproves the MR.

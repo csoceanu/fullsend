@@ -18,8 +18,8 @@ trap 'rm -rf "${TMPDIR}"' EXIT
 
 # --- Helpers ---
 
-# build_mock creates a mock gh binary that returns a preconfigured
-# GraphQL response.
+# build_mock creates a mock fullsend binary that returns a normalized
+# review-thread response from a preconfigured GraphQL-shaped fixture.
 #   $1 — the JSON response to return (empty string = error)
 build_mock() {
   local response_json="$1"
@@ -30,15 +30,31 @@ build_mock() {
 
   printf '%s' "${response_json}" > "${TMPDIR}/graphql-response.txt"
 
-  cat > "${mock_bin}/gh" <<'MOCKEOF'
+  cat > "${mock_bin}/fullsend" <<'MOCKEOF'
 #!/usr/bin/env bash
 RESPONSE_FILE="RESPONSE_PLACEHOLDER"
 
-if [[ "$1" == "api" && "$2" == "graphql" ]]; then
+if [[ "$1" == "fetch-review-threads" ]]; then
   if [[ ! -s "${RESPONSE_FILE}" ]]; then
     exit 1
   fi
-  cat "${RESPONSE_FILE}"
+  jq -c '{threads: ([.data.repository.pullRequest.reviewThreads.nodes[] |
+    {
+      id,
+      is_resolved: .isResolved,
+      path,
+      line,
+      original_line: .originalLine,
+      resolved_by: (.resolvedBy.login // ""),
+      comments_truncated: (.comments.pageInfo.hasNextPage // false),
+      comments: [(.comments.nodes // [])[] | {
+        author: .author.login,
+        author_type: .author.__typename,
+        body,
+        created_at: .createdAt
+      }]
+    }
+  ]), truncated: false}' "${RESPONSE_FILE}"
   exit 0
 fi
 
@@ -46,8 +62,8 @@ exit 0
 MOCKEOF
 
   local escaped="${TMPDIR//\//\\/}\/graphql-response.txt"
-  perl -pi -e "s/RESPONSE_PLACEHOLDER/${escaped}/g" "${mock_bin}/gh"
-  chmod +x "${mock_bin}/gh"
+  perl -pi -e "s/RESPONSE_PLACEHOLDER/${escaped}/g" "${mock_bin}/fullsend"
+  chmod +x "${mock_bin}/fullsend"
 
   echo "${mock_bin}"
 }
@@ -89,6 +105,7 @@ run_test() {
   local exit_code=0
   env \
     PATH="${mock_bin}:${PATH}" \
+    GITHUB_ACTIONS="true" \
     GH_TOKEN="fake-token" \
     ORG_NAME="test-org" \
     PR_NUM="42" \
@@ -158,7 +175,7 @@ THREAD_HUMAN_RESOLVED='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: MarkHidden vs MarkDeprecated", "createdAt": "2026-09-01T10:00:00Z"},
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding: MarkHidden vs MarkDeprecated", "createdAt": "2026-09-01T10:00:00Z"},
       {"author": {"login": "alice", "__typename": "User"}, "body": "We explicitly asked for MarkHidden.", "createdAt": "2026-09-01T11:00:00Z"}
     ]
   }
@@ -180,7 +197,7 @@ THREAD_BOT_RESOLVED='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: something", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding: something", "createdAt": "2026-09-01T10:00:00Z"}
     ]
   }
 }]'
@@ -200,7 +217,7 @@ THREAD_UNRESOLVED='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: open issue", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding: open issue", "createdAt": "2026-09-01T10:00:00Z"}
     ]
   }
 }]'
@@ -220,7 +237,7 @@ THREAD_WITH_FINDING_ID='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "<!-- finding:f_abc123 -->\n**[logic-error]** Missing nil check", "createdAt": "2026-09-01T10:00:00Z"},
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "<!-- finding:f_abc123 -->\n**[logic-error]** Missing nil check", "createdAt": "2026-09-01T10:00:00Z"},
       {"author": {"login": "developer", "__typename": "User"}, "body": "Handled by the caller.", "createdAt": "2026-09-01T11:00:00Z"}
     ]
   }
@@ -242,7 +259,7 @@ THREAD_SILENT='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: naming convention", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding: naming convention", "createdAt": "2026-09-01T10:00:00Z"}
     ]
   }
 }]'

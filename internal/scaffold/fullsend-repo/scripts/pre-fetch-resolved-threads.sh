@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-fetch-resolved-threads.sh — Fetch human-resolved review threads before the review agent runs
 #
-# Queries the PR's review threads via the GitHub GraphQL API and writes
+# Queries the PR's review threads through the fullsend forge client and writes
 # a JSON file listing threads that a human explicitly resolved. The
 # review agent uses this to avoid re-raising findings that a person
 # already dismissed.
@@ -17,113 +17,48 @@
 # script writes an empty file and exits 0 so the review proceeds
 # without resolution data (current behavior preserved).
 #
-# Required environment variables (set by the workflow):
+# Required environment variables (set by the review agent):
 #
 #   - GH_TOKEN          — token with read access to the PR
 #   - SOURCE_REPO       — owner/repo (e.g., "fullsend-ai/fullsend")
 #   - PR_NUM            — PR number
 #   - ORG_NAME          — org name for bot identity filtering
+#   - FULLSEND_BIN      — optional path to the fullsend CLI (defaults to fullsend)
 #
 # Outputs (via GITHUB_OUTPUT):
 #   - human_resolved_file — path to the JSON file
 set -euo pipefail
 
 OUTPUT_FILE="${GITHUB_WORKSPACE:-/tmp}/human-resolved-threads.json"
+
+# This helper is intended for the review-agent pre-script. Local invocations
+# and non-GitHub runners must not attempt a GitHub review-thread lookup.
+if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+  printf '%s\n' '{"resolved_threads":[],"metadata":{"skipped":"not_github_actions"}}' > "${OUTPUT_FILE}"
+  echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
+  exit 0
+fi
+
 REVIEW_BOT="${ORG_NAME}-review[bot]"
 SHARED_REVIEW_BOT="fullsend-ai-review[bot]"
+REVIEW_BOT_LOGIN="${ORG_NAME}-review"
+SHARED_REVIEW_BOT_LOGIN="fullsend-ai-review"
 
-OWNER="${SOURCE_REPO%%/*}"
-NAME="${SOURCE_REPO##*/}"
+FULLSEND_BIN="${FULLSEND_BIN:-fullsend}"
+if ! response=$("${FULLSEND_BIN}" fetch-review-threads --repo "${SOURCE_REPO}" --pr "${PR_NUM}" 2>/dev/null); then
+  echo "::warning::Failed to fetch review threads through forge client — writing empty resolved-threads file"
+  echo '{"resolved_threads":[],"metadata":{"error":"forge_fetch_failed"}}' > "${OUTPUT_FILE}"
+  echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
+  exit 0
+fi
 
-# --- GraphQL query ---
-# Fetches review threads with resolution state, path, line, and comments.
-# Paginated at 100 threads per page with a 20-page cap (matching the
-# pattern in forge_resolve_outdated_review_threads from agents PR #1415).
-QUERY='query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          isResolved
-          path
-          line
-          originalLine
-          resolvedBy { login }
-          comments(first: 100) {
-            pageInfo { hasNextPage }
-            nodes {
-              author { login __typename }
-              body
-              createdAt
-            }
-          }
-        }
-      }
-    }
-  }
-}'
-
-# --- Pagination ---
-cursor=""
-has_next="true"
-page=0
-nodes_json="[]"
-truncated="false"
-
-while [[ "${has_next}" == "true" ]]; do
-  page=$((page + 1))
-  if [[ "${page}" -gt 20 ]]; then
-    echo "::warning::Resolved-threads pagination hit page cap — remaining threads skipped"
-    truncated="true"
-    break
-  fi
-
-  gh_args=(api graphql
-    -f owner="${OWNER}"
-    -f name="${NAME}"
-    -F number="${PR_NUM}"
-    -f query="${QUERY}")
-  if [[ -n "${cursor}" ]]; then
-    gh_args+=(-f cursor="${cursor}")
-  fi
-
-  if ! response=$(gh "${gh_args[@]}" 2>/dev/null); then
-    echo "::warning::Failed to fetch review threads — writing empty resolved-threads file"
-    echo '{"resolved_threads":[],"metadata":{"error":"graphql_fetch_failed"}}' > "${OUTPUT_FILE}"
-    echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
-    exit 0
-  fi
-
-  if echo "${response}" | jq -e '.errors | type == "array" and length > 0' >/dev/null 2>&1; then
-    echo "::warning::Review threads query returned errors — writing empty resolved-threads file"
-    echo '{"resolved_threads":[],"metadata":{"error":"graphql_errors"}}' > "${OUTPUT_FILE}"
-    echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
-    exit 0
-  fi
-
-  page_nodes=$(echo "${response}" | jq -c '.data.repository.pullRequest.reviewThreads.nodes // []' 2>/dev/null) || {
-    echo "::warning::Failed to parse review threads — writing empty resolved-threads file"
-    echo '{"resolved_threads":[],"metadata":{"error":"parse_failed"}}' > "${OUTPUT_FILE}"
-    echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
-    exit 0
-  }
-
-  nodes_json=$(jq -c --argjson page "${page_nodes}" '. + $page' <<< "${nodes_json}" 2>/dev/null) || {
-    echo "::warning::Failed to merge review thread pages — writing empty resolved-threads file"
-    echo '{"resolved_threads":[],"metadata":{"error":"merge_failed"}}' > "${OUTPUT_FILE}"
-    echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
-    exit 0
-  }
-
-  has_next=$(echo "${response}" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' 2>/dev/null) || has_next="false"
-  cursor=$(echo "${response}" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' 2>/dev/null) || cursor=""
-  if [[ "${has_next}" == "true" && -z "${cursor}" ]]; then
-    echo "::warning::Review threads page missing cursor — stopping pagination"
-    break
-  fi
-done
+nodes_json=$(echo "${response}" | jq -c '.threads // []' 2>/dev/null) || {
+  echo "::warning::Failed to parse review threads — writing empty resolved-threads file"
+  echo '{"resolved_threads":[],"metadata":{"error":"parse_failed"}}' > "${OUTPUT_FILE}"
+  echo "human_resolved_file=${OUTPUT_FILE}" >> "${GITHUB_OUTPUT:-/dev/null}"
+  exit 0
+}
+truncated=$(echo "${response}" | jq -r '.truncated // false' 2>/dev/null) || truncated="false"
 
 # --- Filter and transform ---
 # Select threads that:
@@ -142,43 +77,51 @@ done
 #   - resolution_context classification: explicit_dismissal when the
 #     resolver left a comment, silent_resolution otherwise
 #
-# GitHub GraphQL has no Actor/User.type (that is REST). Bots are
-# __typename Bot on comment authors, and login ending in "[bot]" on
-# resolvedBy (typed User in the schema even for GitHub Apps).
+# The forge client normalizes the GraphQL actor type into author_type. Bots
+# are author_type "Bot" on comments, while resolvedBy is filtered by the
+# GitHub App login suffix.
 
 RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
   --arg bot "${REVIEW_BOT}" \
   --arg shared_bot "${SHARED_REVIEW_BOT}" \
+  --arg bot_login "${REVIEW_BOT_LOGIN}" \
+  --arg shared_bot_login "${SHARED_REVIEW_BOT_LOGIN}" \
   '[.[]
-    | select(.isResolved == true)
-    | select(.resolvedBy != null)
-    | select(.resolvedBy.login != $bot and .resolvedBy.login != $shared_bot)
-    | select((.resolvedBy.login | endswith("[bot]")) | not)
-    | select((.comments.nodes // [] | length) > 0)
-    | select((.comments.pageInfo.hasNextPage // false) == false)
-    | .resolvedBy.login as $resolver
+    | select(.is_resolved == true)
+    | select(.resolved_by != null and .resolved_by != "")
+    | select(.resolved_by != $bot and .resolved_by != $shared_bot)
+    | select((.resolved_by | endswith("[bot]")) | not)
+    | select((.comments // [] | length) > 0)
+    | select((.comments_truncated // false) == false)
+    | .resolved_by as $resolver
     | {
         file: .path,
         line: .line,
-        original_line: .originalLine,
+        original_line: .original_line,
         resolved_by: $resolver,
         bot_finding_snippet: (
-          [.comments.nodes[] | select(.author.login == $bot or .author.login == $shared_bot)]
+          [.comments[]
+           | select(.author_type == "Bot")
+           | select(.author == $bot_login or .author == $shared_bot_login or
+                    .author == $bot or .author == $shared_bot)]
           | first // null
           | if . then (.body | .[0:200]) else null end
         ),
         finding_id: (
-          [.comments.nodes[] | select(.author.login == $bot or .author.login == $shared_bot)]
+          [.comments[]
+           | select(.author_type == "Bot")
+           | select(.author == $bot_login or .author == $shared_bot_login or
+                    .author == $bot or .author == $shared_bot)]
           | first // null
           | if . then (.body | capture("<!-- finding:(?<id>[a-zA-Z0-9_]+) -->") // null | .id // null) else null end
         ),
         human_response: (
-          [.comments.nodes[] | select(.author.login == $resolver)]
+          [.comments[] | select(.author == $resolver)]
           | last // null
           | if . then (.body | .[0:500]) else null end
         ),
         resolution_context: (
-          if ([.comments.nodes[] | select(.author.login == $resolver)] | length) > 0
+          if ([.comments[] | select(.author == $resolver)] | length) > 0
           then "explicit_dismissal"
           else "silent_resolution"
           end

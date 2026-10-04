@@ -466,6 +466,36 @@ type ReviewComment struct {
 	Body string // comment body (Markdown)
 }
 
+// ReviewThreadComment is a comment belonging to a pull-request review thread.
+// AuthorType is the forge's actor type (for example, "Bot" or "User").
+type ReviewThreadComment struct {
+	Author     string `json:"author"`
+	AuthorType string `json:"author_type"`
+	Body       string `json:"body"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// ReviewThread represents the resolution state and comments of a pull-request
+// review thread. Forges that do not expose review threads return
+// ErrNotSupported.
+type ReviewThread struct {
+	ID                string                `json:"id"`
+	IsResolved        bool                  `json:"is_resolved"`
+	Path              string                `json:"path"`
+	Line              *int                  `json:"line"`
+	OriginalLine      *int                  `json:"original_line"`
+	ResolvedBy        string                `json:"resolved_by"`
+	Comments          []ReviewThreadComment `json:"comments"`
+	CommentsTruncated bool                  `json:"comments_truncated"`
+}
+
+// ReviewThreadPage contains a complete fetch of a pull request's review
+// threads. Truncated is true when the implementation hit its safety cap.
+type ReviewThreadPage struct {
+	Threads   []ReviewThread `json:"threads"`
+	Truncated bool           `json:"truncated"`
+}
+
 // PullRequestFileDiff represents a file changed in a pull request along
 // with its unified diff patch. The patch may be empty for binary files,
 // rename-only changes, or when GitHub truncates large diffs.
@@ -933,6 +963,10 @@ type Client interface {
 	// comments, when non-nil, attaches inline diff comments to the review.
 	CreatePullRequestReview(ctx context.Context, owner, repo string, number int, event, body, commitSHA string, comments []ReviewComment) error
 	ListPullRequestReviews(ctx context.Context, owner, repo string, number int) ([]PullRequestReview, error)
+	// ListPullRequestReviewThreads returns review threads, including their
+	// resolution state and comments. It returns ErrNotSupported when the forge
+	// has no equivalent review-thread API.
+	ListPullRequestReviewThreads(ctx context.Context, owner, repo string, number int) (ReviewThreadPage, error)
 	DismissPullRequestReview(ctx context.Context, owner, repo string, number, reviewID int, message string) error
 
 	// Change proposal merge
