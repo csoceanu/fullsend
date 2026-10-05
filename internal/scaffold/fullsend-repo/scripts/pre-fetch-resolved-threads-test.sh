@@ -279,7 +279,7 @@ THREAD_MIXED='[
     "originalLine": 1,
     "resolvedBy": {"login": "human1", "__typename": "User"},
     "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding 1", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding 1", "createdAt": "2026-09-01T10:00:00Z"}
     ]}
   },
   {
@@ -290,7 +290,7 @@ THREAD_MIXED='[
     "originalLine": 2,
     "resolvedBy": null,
     "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding 2", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding 2", "createdAt": "2026-09-01T10:00:00Z"}
     ]}
   },
   {
@@ -301,7 +301,7 @@ THREAD_MIXED='[
     "originalLine": 3,
     "resolvedBy": {"login": "test-org-review[bot]", "__typename": "Bot"},
     "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding 3", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding 3", "createdAt": "2026-09-01T10:00:00Z"}
     ]}
   },
   {
@@ -312,7 +312,7 @@ THREAD_MIXED='[
     "originalLine": 4,
     "resolvedBy": {"login": "human2", "__typename": "User"},
     "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding 4", "createdAt": "2026-09-01T10:00:00Z"},
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding 4", "createdAt": "2026-09-01T10:00:00Z"},
       {"author": {"login": "human2", "__typename": "User"}, "body": "Not applicable.", "createdAt": "2026-09-01T11:00:00Z"}
     ]}
   }
@@ -338,7 +338,7 @@ THREAD_SHARED_BOT_RESOLVED='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "fullsend-ai-review[bot]", "__typename": "Bot"}, "body": "Finding", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "fullsend-ai-review", "__typename": "Bot"}, "body": "Finding", "createdAt": "2026-09-01T10:00:00Z"}
     ]
   }
 }]'
@@ -364,7 +364,7 @@ THREAD_INCOMPLETE_COMMENTS='[{
   "comments": {
     "pageInfo": {"hasNextPage": true},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding", "createdAt": "2026-09-01T10:00:00Z"}
     ]
   }
 }]'
@@ -384,7 +384,7 @@ THREAD_DEPENDABOT_RESOLVED='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding", "createdAt": "2026-09-01T10:00:00Z"}
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding", "createdAt": "2026-09-01T10:00:00Z"}
     ]
   }
 }]'
@@ -406,7 +406,7 @@ THREAD_DIFFERENT_COMMENTER='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: something wrong", "createdAt": "2026-09-01T10:00:00Z"},
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding: something wrong", "createdAt": "2026-09-01T10:00:00Z"},
       {"author": {"login": "bob", "__typename": "User"}, "body": "I will fix this.", "createdAt": "2026-09-01T11:00:00Z"}
     ]
   }
@@ -428,7 +428,7 @@ THREAD_RESOLVER_COMMENTED='[{
   "comments": {
     "pageInfo": {"hasNextPage": false},
     "nodes": [
-      {"author": {"login": "test-org-review[bot]", "__typename": "Bot"}, "body": "Finding: issue here", "createdAt": "2026-09-01T10:00:00Z"},
+      {"author": {"login": "test-org-review", "__typename": "Bot"}, "body": "Finding: issue here", "createdAt": "2026-09-01T10:00:00Z"},
       {"author": {"login": "bob", "__typename": "User"}, "body": "I think this is fine.", "createdAt": "2026-09-01T10:30:00Z"},
       {"author": {"login": "alice", "__typename": "User"}, "body": "Intentional, closing.", "createdAt": "2026-09-01T11:00:00Z"}
     ]
