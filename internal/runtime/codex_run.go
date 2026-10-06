@@ -52,6 +52,14 @@ const codexPathVar = "FULLSEND_CODEX_PATH"
 // closing the intra-iteration window that Claude Code and pi leave open.
 const codexHookDigestsEnv = "FULLSEND_CODEX_HOOK_DIGESTS"
 
+// codexSpawnDigestsEnv carries what the spawn guard re-checks before it
+// admits a child, as "<path>:<sha256>" pairs relative to CODEX_HOME, space
+// separated: hooks.json and every registered role file, both of which codex
+// reads again when a child starts. Its keys are also the guard's role
+// registry. Exported at the same point as codexHookDigestsEnv, for the same
+// reason (ADR 0126).
+const codexSpawnDigestsEnv = "FULLSEND_CODEX_SPAWN_DIGESTS"
+
 // codexHookDigestsValue renders the map for the environment. Sorted so the
 // launch command is stable across iterations.
 func codexHookDigestsValue(scripts map[string]string) string {

@@ -4,9 +4,10 @@ sandbox tool hook scripts (internal/security/hooks/*.py; ADR 0090,
 docs/contributing/runtime-implementation.md "Sandbox hook contract").
 
 Invoked by codex from `$CODEX_HOME/hooks.json`, one handler per
-`security.HookPlan` group:
+`security.HookPlan` group, plus one for the spawn policy of ADR 0126:
 
     python3 <this file> <phase> <script.py> [<script.py> ...]
+    python3 <this file> SpawnGuard
 
 The hook payload arrives as JSON on stdin. Everything else is derived from
 this file's own location, so nothing in the agent-writable environment can
@@ -77,11 +78,18 @@ from typing import Any
 
 ADAPTER_DIR = os.path.dirname(os.path.abspath(__file__))
 HOOKS_DIR = os.path.join(ADAPTER_DIR, "hooks")
+ROLES_DIR = os.path.join(ADAPTER_DIR, "agents")
 FINDINGS_PATH = "/sandbox/workspace/.security/findings.jsonl"
 
 # Set by CodexRuntime.Run in the launch command, after .env and before codex
 # starts, as "<name>:<sha256>" pairs. See verify_script_digest.
 HOOK_DIGESTS_ENV = "FULLSEND_CODEX_HOOK_DIGESTS"
+
+# Set the same way, for the spawn guard: "hooks.json:<sha256>" plus one
+# "agents/<role>.toml:<sha256>" per registered role, keys relative to this
+# file's directory. The keys are the role registry and the values are what
+# the guard re-checks before every spawn (ADR 0126). See run_spawn_guard.
+SPAWN_DIGESTS_ENV = "FULLSEND_CODEX_SPAWN_DIGESTS"
 
 # The PATH captured before the agent-writable .env was sourced. See _child_env.
 PINNED_PATH_ENV = "FULLSEND_CODEX_PATH"
@@ -118,6 +126,43 @@ MAX_SCRIPT_BYTES = 1 << 20
 PHASE_PRE = "PreToolUse"
 PHASE_POST = "PostToolUse"
 
+# argv[1] of the spawn guard handler, the first PreToolUse group
+# codexHooksJSON writes. It takes no script: the policy is this file's.
+MODE_SPAWN_GUARD = "SpawnGuard"
+# The only multi-agent tool the guard admits, under its policy (ADR 0126).
+SPAWN_TOOL_V1 = "spawn_agent"
+# The V1 tools passed through unchanged, from the parent only: each acts on
+# a child the guard already admitted and none can start or reopen one
+# (send_input to a closed child fails with `not found`, verified on 0.157.0
+# through 0.159.3). From a child (agent_id in the payload) they are denied,
+# defence in depth at depth one. Every other matched name, the V1 resume
+# and the V2 tools included, is denied by name.
+SPAWN_GUARD_PASS = frozenset(
+    {
+        "multi_agent_v1wait_agent",
+        "multi_agent_v1close_agent",
+        "multi_agent_v1send_input",
+    }
+)
+# A spawn without agent_type asks codex for its `default` role.
+SPAWN_DEFAULT_ROLE = "default"
+
+# The findings-log line an admitted spawn writes (severity info, action
+# allow, detail "admitted spawn tool_use_id=<id> agent_type=<role>"). Codex's
+# exec stream drops hook outcomes and its rollout does not persist them, so
+# this line is the only record that the guard decided a spawn; the runner
+# compares it with the completed spawns of the exec stream after the run.
+SPAWN_ADMIT_FINDING = "codex_spawn_guard_admit"
+# The guard's own deadline, measured from _START and below the hooks.json
+# timeout at which codex kills the handler: a killed handler does not
+# block, so the guard denies on its own clock (arm_spawn_guard_deadline;
+# ADR 0126).
+SPAWN_GUARD_DEADLINE_S = HANDLER_TIMEOUT_S - BUDGET_MARGIN_S
+SPAWN_GUARD_DEADLINE_REASON = (
+    "fullsend: the spawn guard did not finish verifying the run's files inside "
+    "its deadline; refusing the spawn (fail closed)"
+)
+
 # codex tool name -> the Claude Code name security.HookGroup.Tools,
 # FULLSEND_TOOL_ALLOWLIST and the scripts are written in (#608).
 # codex-rs/core/src/tools/hook_names.rs: the shell tool is already `Bash`;
@@ -127,6 +172,13 @@ PHASE_POST = "PostToolUse"
 CLAUDE_TOOL_FOR_CODEX = {
     "apply_patch": "Edit",
     "spawn_agent": "Agent",
+    # The V1 wait, close and send_input act on a child the spawn guard
+    # admitted, so the sandbox hooks see them as the Agent the spawn already
+    # is. The resume stays unmapped: an allowlist that does not name it still
+    # blocks it when the guard cannot run. The guard reads the raw tool_name.
+    "multi_agent_v1wait_agent": "Agent",
+    "multi_agent_v1close_agent": "Agent",
+    "multi_agent_v1send_input": "Agent",
 }
 
 
@@ -209,10 +261,10 @@ _CHILD_BOOTSTRAP = (
 )
 
 
-def expected_digests() -> dict[str, str] | None:
+def expected_digests(env_name: str = HOOK_DIGESTS_ENV) -> dict[str, str] | None:
     """The name -> sha256 map the run command put in this process's
-    environment, or None when it is absent or unreadable."""
-    raw = os.environ.get(HOOK_DIGESTS_ENV, "").strip()
+    environment under env_name, or None when it is absent or unreadable."""
+    raw = os.environ.get(env_name, "").strip()
     if raw == "":
         return None
     digests: dict[str, str] = {}
@@ -603,6 +655,80 @@ def run_pre_tool_use(scripts: list[str], hook_input: dict[str, Any], tool_name: 
     sys.exit(0)
 
 
+def spawn_policy(hook_input: dict[str, Any], registered: dict[str, str]) -> str | None:
+    """The reason a collaboration tool call is outside the runner's policy
+    (ADR 0126), or None for a V1 spawn from the root thread of a registered
+    role with fork_context false and no model or effort argument.
+
+    `registered` is the spawn digest map: a role is registered when its file
+    has a key there. Nothing here reads the file system, so an agent_type is
+    never used as a path. A child's payload carries agent_id and agent_type
+    at the top level (verified on 0.157.0 through 0.159.3); the root's carries
+    neither.
+    """
+    tool = hook_input.get("tool_name")
+    if tool != SPAWN_TOOL_V1:
+        return (
+            f"fullsend: {tool!r} is not the V1 spawn tool; resuming a child, V2 "
+            "tools and unknown multi-agent tools are not allowed"
+        )
+    if "agent_id" in hook_input or "agent_type" in hook_input:
+        return "fullsend: a child may not spawn agents; only the root thread dispatches"
+    args = hook_input.get("tool_input")
+    if not isinstance(args, dict):
+        return "fullsend: spawn_agent arguments are not an object (fail closed)"
+    if args.get("fork_context") is not False:
+        return (
+            "fullsend: spawn_agent must pass fork_context: false; a child starts "
+            "without the parent's context"
+        )
+    for key in ("model", "reasoning_effort"):
+        if key in args:
+            return (
+                f"fullsend: spawn_agent must not pass {key}; the runner binds each "
+                "child's model and effort"
+            )
+    role = args.get("agent_type", SPAWN_DEFAULT_ROLE)
+    if not isinstance(role, str) or f"agents/{role}.toml" not in registered:
+        return f"fullsend: spawn_agent role {role!r} is not one the runner registered"
+    return None
+
+
+def run_spawn_guard(hook_input: dict[str, Any]) -> None:
+    """Admit (exit 0) or deny (exit 2 with a reason on stderr) a multi-agent
+    tool call. Every path but the admit path ends in block(), the __main__
+    handler's exception path included; see SPAWN_GUARD_PASS for what is
+    passed through and SPAWN_ADMIT_FINDING for what an admission records."""
+    tool = hook_input.get("tool_name")
+    if tool in SPAWN_GUARD_PASS:
+        if "agent_id" in hook_input:
+            denied = f"fullsend: {tool!r} is not allowed from a child (fail closed)"
+            log_finding("codex_spawn_guard_block", "critical", denied, "block")
+            block(denied)
+        sys.exit(0)
+    registered = expected_digests(SPAWN_DIGESTS_ENV)
+    if registered is None:
+        reason: str | None = (
+            f"fullsend: {SPAWN_DIGESTS_ENV} is missing or malformed, so no role is "
+            "registered (fail closed)"
+        )
+    else:
+        reason = spawn_policy(hook_input, registered)
+    if reason is not None:
+        log_finding("codex_spawn_guard_block", "critical", reason, "block")
+        block(reason)
+    # spawn_policy returned None, so tool_input is an object and its
+    # agent_type, when present, a registered role.
+    role = hook_input["tool_input"].get("agent_type", SPAWN_DEFAULT_ROLE)
+    log_finding(
+        SPAWN_ADMIT_FINDING,
+        "info",
+        f"admitted spawn tool_use_id={hook_input.get('tool_use_id')} agent_type={role}",
+        "allow",
+    )
+    sys.exit(0)
+
+
 def run_post_tool_use(scripts: list[str], hook_input: dict[str, Any], tool_name: str) -> None:
     tool_input = hook_input.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, dict) else {}
@@ -707,14 +833,15 @@ def run_post_tool_use(scripts: list[str], hook_input: dict[str, Any], tool_name:
 
 
 def main() -> None:
-    if len(sys.argv) < 3:
+    phase = sys.argv[1] if len(sys.argv) > 1 else ""
+    if phase != MODE_SPAWN_GUARD and len(sys.argv) < 3:
         # Misconfiguration, not a tool decision. Fail closed on the phase that
-        # can block and stay quiet on the one that cannot.
+        # can block and stay quiet on the one that cannot. The spawn guard is
+        # the one handler that takes no script: its policy is this file's.
         message = f"fullsend: {os.path.basename(__file__)} needs <phase> and at least one script"
         log_finding("codex_adapter_misconfigured", "critical", message, "block")
         block(message)
 
-    phase = sys.argv[1]
     scripts = sys.argv[2:]
 
     raw = sys.stdin.read()
@@ -742,6 +869,12 @@ def main() -> None:
         )
         log_finding("codex_adapter_bad_payload", "critical", message, "block")
         block(message)
+
+    if phase == MODE_SPAWN_GUARD:
+        # The raw payload, before tool-name translation: the policy is written
+        # in codex's own names, and a child's payload is told apart by fields
+        # the translation does not touch.
+        run_spawn_guard(hook_input)
 
     codex_tool = hook_input.get("tool_name")
     codex_tool = codex_tool if isinstance(codex_tool, str) else ""

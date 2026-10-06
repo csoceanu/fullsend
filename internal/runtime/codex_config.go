@@ -364,13 +364,28 @@ func codexMatcherFor(tools []string) (matcher string, dropped []string, ok bool)
 	return strings.Join(tokens, "|"), dropped, true
 }
 
+// codexSpawnGuardMatcher selects every multi-agent tool codex offers, so the
+// handler is deny-by-default among them (ADR 0126). codex names a hook tool
+// as the namespace and the tool joined with no separator
+// (`multi_agent_v1resume_agent`, `collaborationspawn_agent`), except the V1
+// spawn, exported bare as `spawn_agent`; so the pattern covers both
+// namespaces and any bare name ending in spawn_agent or resume_agent. It is
+// a regex, not an exact alternation like codexMatcherFor renders: codex
+// compiles a matcher holding a character outside [A-Za-z0-9_|] as one and
+// tests it unanchored.
+const codexSpawnGuardMatcher = "^(multi_agent_v1|collaboration)|(spawn|resume)_agent$"
+
+// codexSpawnGuardMode is the adapter argument that selects the spawn policy
+// (ADR 0126) in place of a hook-script phase.
+const codexSpawnGuardMode = "SpawnGuard"
+
 // codexHooksJSON renders $CODEX_HOME/hooks.json from the runtime-neutral
 // security.HookPlan, and returns the notes Bootstrap prints for tools that
 // have no codex counterpart.
 //
-// One handler per plan group, invoking the adapter with the phase and the
-// group's scripts, so the scripts still run in plan order inside one process
-// — the ordering the PostToolUse chain depends on.
+// The spawn guard first, then one handler per plan group, invoking the
+// adapter with the phase and the group's scripts, so the scripts still run in
+// plan order inside one process — the ordering the PostToolUse chain depends on.
 //
 // python is the absolute interpreter path Bootstrap resolved, rendered with
 // `-I`: codex spawns a hook through the shell it inherits, *after* the
@@ -393,6 +408,19 @@ func codexHooksJSON(configDir, python string, hooks security.SandboxHookConfig) 
 	}
 	var notes []string
 	adapter := configDir + "/" + codexAdapterFile
+
+	// The spawn guard is element 0 of PreToolUse whenever hooks.json is
+	// written, also when every sandbox hook is off: with harness security on,
+	// codex may start a child only under the runner's policy (ADR 0126). It
+	// takes no script; the policy is the adapter's own.
+	cfg.Hooks[string(security.HookPhasePreToolUse)] = []codexHookMatcherSet{{
+		Matcher: codexSpawnGuardMatcher,
+		Hooks: []codexHookEntry{{
+			Type:    "command",
+			Command: strings.Join([]string{python, "-I", adapter, codexSpawnGuardMode}, " "),
+			Timeout: security.HookTimeoutSeconds,
+		}},
+	}}
 
 	for _, g := range security.HookPlan(hooks) {
 		if g.Phase == security.HookPhasePostToolUseFailure {
