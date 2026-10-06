@@ -991,7 +991,6 @@ jobs:
           PRIOR_REVIEW_FILE: ${{ steps.prior-review.outputs.prior_review_file }}
           PRIOR_REVIEW_PROVENANCE: ${{ steps.prior-review.outputs.prior_review_provenance }}
           FULLSEND_APP_SET: ${{ vars.FULLSEND_APP_SET }}
-          HUMAN_RESOLVED_FETCH_SCRIPT: ${{ inputs.install_mode == 'per-repo' && '.fullsend/scripts/pre-fetch-resolved-threads.sh' || '' }}
           HUMAN_RESOLVED_FILE: ${{ github.workspace }}/human-resolved-threads.json
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
           OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT }}

@@ -770,11 +770,102 @@ func (c *LiveClient) ListPullRequestReviews(ctx context.Context, owner, repo str
 	return result, nil
 }
 
-// ListPullRequestReviewThreads is not available as a portable GitLab
-// equivalent. GitLab discussions do not expose the GitHub review-thread
-// resolution contract used by the review agent.
-func (c *LiveClient) ListPullRequestReviewThreads(_ context.Context, _ string, _ string, _ int) (forge.ReviewThreadPage, error) {
-	return forge.ReviewThreadPage{}, forge.ErrNotSupported
+// ListPullRequestReviewThreads maps GitLab merge-request discussions to the
+// common review-thread model. A discussion is resolved when one of its
+// resolvable notes is marked resolved; the resolver and note authors are
+// preserved so consumers can distinguish human and bot resolutions.
+func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, repo string, number int) (forge.ReviewThreadPage, error) {
+	proj := projectPath(owner, repo)
+	result := forge.ReviewThreadPage{}
+
+	for page := 1; page <= 20; page++ {
+		path := fmt.Sprintf("/projects/%s/merge_requests/%d/discussions?per_page=100&page=%d",
+			proj, number, page)
+		resp, err := c.get(ctx, path)
+		if err != nil {
+			return forge.ReviewThreadPage{}, fmt.Errorf("list discussions for !%d page %d: %w", number, page, err)
+		}
+
+		var discussions []struct {
+			ID    string `json:"id"`
+			Notes []struct {
+				ID         int    `json:"id"`
+				Body       string `json:"body"`
+				System     bool   `json:"system"`
+				CreatedAt  string `json:"created_at"`
+				Resolvable bool   `json:"resolvable"`
+				Resolved   bool   `json:"resolved"`
+				Author     struct {
+					Username string `json:"username"`
+					Bot      bool   `json:"bot"`
+				} `json:"author"`
+				ResolvedBy *struct {
+					Username string `json:"username"`
+					Bot      bool   `json:"bot"`
+				} `json:"resolved_by"`
+				Position *struct {
+					NewPath string `json:"new_path"`
+					OldPath string `json:"old_path"`
+					NewLine *int   `json:"new_line"`
+					OldLine *int   `json:"old_line"`
+				} `json:"position"`
+			} `json:"notes"`
+		}
+		if err := decodeJSON(resp, &discussions); err != nil {
+			return forge.ReviewThreadPage{}, fmt.Errorf("decode discussions for !%d page %d: %w", number, page, err)
+		}
+
+		for _, discussion := range discussions {
+			thread := forge.ReviewThread{ID: discussion.ID}
+			for _, note := range discussion.Notes {
+				if note.System {
+					continue
+				}
+
+				authorType := "User"
+				if note.Author.Bot {
+					authorType = "Bot"
+				}
+				thread.Comments = append(thread.Comments, forge.ReviewThreadComment{
+					Author:     note.Author.Username,
+					AuthorType: authorType,
+					Body:       note.Body,
+					CreatedAt:  note.CreatedAt,
+				})
+
+				if !note.Resolvable || !note.Resolved {
+					continue
+				}
+				thread.IsResolved = true
+				if note.ResolvedBy != nil {
+					thread.ResolvedBy = note.ResolvedBy.Username
+					if note.ResolvedBy.Bot {
+						thread.ResolvedByType = "Bot"
+					} else {
+						thread.ResolvedByType = "User"
+					}
+				}
+				if note.Position != nil {
+					thread.Path = note.Position.NewPath
+					if thread.Path == "" {
+						thread.Path = note.Position.OldPath
+					}
+					thread.Line = note.Position.NewLine
+					thread.OriginalLine = note.Position.OldLine
+				}
+			}
+			result.Threads = append(result.Threads, thread)
+		}
+
+		if len(discussions) < 100 {
+			break
+		}
+		if page == 20 {
+			result.Truncated = true
+		}
+	}
+
+	return result, nil
 }
 
 // DismissPullRequestReview dismisses a review on a merge request.

@@ -62,7 +62,6 @@ func TestFetchReviewThreadsCommand_ValidatesFlags(t *testing.T) {
 		{name: "non-positive pull request", args: []string{"--repo", "owner/repo", "--pr", "0"}, want: "positive integer"},
 		{name: "invalid repository", args: []string{"--repo", "owner", "--pr", "1"}, want: "owner/repo format"},
 		{name: "unsupported forge", args: []string{"--repo", "owner/repo", "--pr", "1", "--forge", "bitbucket", "--token", "token"}, want: "unsupported forge"},
-		{name: "gitlab review threads unsupported", args: []string{"--repo", "owner/repo", "--pr", "1", "--forge", "gitlab", "--token", "token", "--base-url", "https://gitlab.example.com"}, want: "not supported"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

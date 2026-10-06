@@ -1403,45 +1403,23 @@ func TestShimLabeledEventFiltering(t *testing.T) {
 	}
 }
 
-// TestReviewWorkflowUsesAgentPreScriptForHumanResolvedThreads protects the
-// per-repo review path from growing a second CLI installation. The root action
-// already installs fullsend before the agent pre-script runs, so the workflow
-// only needs to pass the fetch helper and its output path to the agent.
-func TestReviewWorkflowUsesAgentPreScriptForHumanResolvedThreads(t *testing.T) {
-	workflows := []string{
-		".github/workflows/reusable-dispatch.yml",
-	}
-
-	for _, workflowPath := range workflows {
-		t.Run(workflowPath, func(t *testing.T) {
-			content, err := os.ReadFile(filepath.Join("..", "..", workflowPath))
-			require.NoError(t, err)
-			workflow := string(content)
-			section := workflow
-			if workflowPath == ".github/workflows/reusable-dispatch.yml" {
-				start := strings.Index(workflow, "\n  review:\n")
-				require.NotEqual(t, -1, start, "review job must be present")
-				section = workflow[start:]
-				if end := strings.Index(section, "\n  fix:\n"); end != -1 {
-					section = section[:end]
-				}
-			}
-
-			assert.Contains(t, section, "HUMAN_RESOLVED_FETCH_SCRIPT:")
-			assert.Contains(t, section, "HUMAN_RESOLVED_FILE:")
-			assert.Contains(t, section, "FULLSEND_APP_SET:")
-			assert.NotContains(t, section, "Detect review CLI install mode")
-			assert.NotContains(t, section, "Install fullsend CLI for review context")
-			assert.NotContains(t, section, "steps.install-fullsend")
-			assert.NotContains(t, section, "FULLSEND_BIN:")
-		})
-	}
-
-	perOrgContent, err := os.ReadFile(filepath.Join("..", "..", ".github/workflows/reusable-review.yml"))
+// TestReviewWorkflowPassesHumanResolutionOutput verifies that the per-repo
+// workflow exposes the output location to the agent while leaving fetch
+// orchestration to the agent pre-script.
+func TestReviewWorkflowPassesHumanResolutionOutput(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github/workflows/reusable-dispatch.yml"))
 	require.NoError(t, err)
-	perOrgAgent := extractStepSection(t, string(perOrgContent), "Run review agent")
-	assert.NotContains(t, perOrgAgent, "HUMAN_RESOLVED_FETCH_SCRIPT:")
-	assert.NotContains(t, perOrgAgent, "HUMAN_RESOLVED_FILE:")
+	workflow := string(content)
+	start := strings.Index(workflow, "\n  review:\n")
+	require.NotEqual(t, -1, start, "review job must be present")
+	section := workflow[start:]
+	if end := strings.Index(section, "\n  fix:\n"); end != -1 {
+		section = section[:end]
+	}
+
+	assert.Contains(t, section, "FULLSEND_APP_SET: ${{ vars.FULLSEND_APP_SET }}")
+	assert.Contains(t, section, "HUMAN_RESOLVED_FILE: ${{ github.workspace }}/human-resolved-threads.json")
+	assert.NotContains(t, section, "HUMAN_RESOLVED_FETCH_SCRIPT:")
 }
 
 // TestRoutingLabelPrefixDrift validates that every TRIGGERING_LABEL comparison

@@ -72,6 +72,46 @@ func TestCreateIssue(t *testing.T) {
 	assert.Equal(t, []string{"bug", "urgent"}, issue.Labels)
 }
 
+func TestListPullRequestReviewThreads(t *testing.T) {
+	client, mux := setupTest(t)
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/42/discussions", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "100", r.URL.Query().Get("per_page"))
+		assert.Equal(t, "1", r.URL.Query().Get("page"))
+		writeJSON(t, w, http.StatusOK, []map[string]any{
+			{
+				"id": "discussion-1",
+				"notes": []map[string]any{
+					{
+						"id": 7, "body": "Please update this", "created_at": "2026-10-06T10:00:00Z",
+						"resolvable": true, "resolved": true,
+						"author":      map[string]any{"username": "botuser", "bot": true},
+						"resolved_by": map[string]any{"username": "reviewer", "bot": false},
+						"position":    map[string]any{"new_path": "main.go", "old_path": "main.go", "new_line": 17, "old_line": 16},
+					},
+				},
+			},
+			{
+				"id": "discussion-2",
+				"notes": []map[string]any{
+					{"id": 8, "body": "unresolved", "resolvable": true, "resolved": false, "author": map[string]any{"username": "reviewer", "bot": false}},
+				},
+			},
+		})
+	})
+
+	got, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
+	require.NoError(t, err)
+	require.Len(t, got.Threads, 2)
+	assert.Equal(t, "discussion-1", got.Threads[0].ID)
+	assert.True(t, got.Threads[0].IsResolved)
+	assert.Equal(t, "reviewer", got.Threads[0].ResolvedBy)
+	assert.Equal(t, "User", got.Threads[0].ResolvedByType)
+	assert.Equal(t, "main.go", got.Threads[0].Path)
+	assert.Equal(t, 17, *got.Threads[0].Line)
+	assert.Equal(t, "Bot", got.Threads[0].Comments[0].AuthorType)
+	assert.False(t, got.Threads[1].IsResolved)
+}
+
 func TestCreateIssue_NoLabels(t *testing.T) {
 	client, mux := setupTest(t)
 	ctx := context.Background()
@@ -471,11 +511,12 @@ func TestMinimizeComment(t *testing.T) {
 	require.ErrorIs(t, err, forge.ErrNotSupported)
 }
 
-func TestListPullRequestReviewThreads_NotSupported(t *testing.T) {
+func TestListPullRequestReviewThreads_APIError(t *testing.T) {
 	client, _ := setupTest(t)
 
 	_, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
-	require.ErrorIs(t, err, forge.ErrNotSupported)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list discussions for !42 page 1")
 }
 
 // ---------------------------------------------------------------------------
