@@ -333,9 +333,7 @@ runs:
           echo "::warning::Release download failed; falling back to source build"
         fi
         echo "::add-mask::${GH_TOKEN}"
-        # Keep the agent source checkout separate from the review-context CLI
-        # installer, which may have run earlier in the same job.
-        SRC="${RUNNER_TEMP}/fullsend-agent-src"
+        SRC="${RUNNER_TEMP}/fullsend-src"
         REMOTE="https://x-access-token:${GH_TOKEN}@github.com/fullsend-ai/fullsend.git"
         echo "Cloning fullsend at ref: ${SOURCE_REF}"
         git init "${SRC}"
@@ -355,8 +353,8 @@ runs:
       if: steps.detect.outputs.install-method == 'source' || steps.download-release.outcome == 'failure'
       uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
       with:
-        go-version-file: ${{ runner.temp }}/fullsend-agent-src/go.mod
-        cache-dependency-path: ${{ runner.temp }}/fullsend-agent-src/go.sum
+        go-version-file: ${{ runner.temp }}/fullsend-src/go.mod
+        cache-dependency-path: ${{ runner.temp }}/fullsend-src/go.sum
 
     - name: Build fullsend from source
       if: steps.detect.outputs.install-method == 'source' || steps.download-release.outcome == 'failure'
@@ -364,7 +362,7 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "${RUNNER_TEMP}/fullsend"
-        cd "${RUNNER_TEMP}/fullsend-agent-src"
+        cd "${RUNNER_TEMP}/fullsend-src"
         make go-build
         cp bin/fullsend "${RUNNER_TEMP}/fullsend/fullsend"
         echo "${RUNNER_TEMP}/fullsend" >> "${GITHUB_PATH}"

@@ -178,10 +178,7 @@ runs:
           echo "::warning::Release download failed; falling back to source build"
         fi
         echo "::add-mask::${GH_TOKEN}"
-        # This action can run before the root action.yml in the same job. Keep
-        # its source checkout separate so the later installer can initialize
-        # its own repository without colliding with this one.
-        SRC="${RUNNER_TEMP}/fullsend-cli-src"
+        SRC="${RUNNER_TEMP}/fullsend-src"
         REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${WORKFLOW_REPOSITORY}.git"
         echo "Cloning ${WORKFLOW_REPOSITORY} at ref: ${WORKFLOW_SHA}"
         git init "${SRC}"
@@ -199,8 +196,8 @@ runs:
       if: inputs.mode == 'upstream' && (steps.resolve-tag.outputs.tag == '' || steps.install-release.outcome == 'failure')
       uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
       with:
-        go-version-file: ${{ runner.temp }}/fullsend-cli-src/go.mod
-        cache-dependency-path: ${{ runner.temp }}/fullsend-cli-src/go.sum
+        go-version-file: ${{ runner.temp }}/fullsend-src/go.mod
+        cache-dependency-path: ${{ runner.temp }}/fullsend-src/go.sum
 
     - name: Build fullsend from source
       id: install-upstream
@@ -209,7 +206,7 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "${RUNNER_TEMP}/fullsend"
-        cd "${RUNNER_TEMP}/fullsend-cli-src"
+        cd "${RUNNER_TEMP}/fullsend-src"
         make go-build
         cp bin/fullsend "${RUNNER_TEMP}/fullsend/fullsend"
         echo "${RUNNER_TEMP}/fullsend" >> "${GITHUB_PATH}"

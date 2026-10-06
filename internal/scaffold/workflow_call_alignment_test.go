@@ -1403,11 +1403,11 @@ func TestShimLabeledEventFiltering(t *testing.T) {
 	}
 }
 
-// TestReviewCLIInstallModeDetection protects the per-repo review path from
-// selecting the CLI install mode from the caller's input instead of the files
-// actually present in the checkout. Vendored installs must use the checked-in
-// action, while upstream installs must use the downloaded CLI.
-func TestReviewCLIInstallModeDetection(t *testing.T) {
+// TestReviewWorkflowUsesAgentPreScriptForHumanResolvedThreads protects the
+// review paths from growing a second CLI installation. The root action already
+// installs fullsend before the agent pre-script runs, so the workflows only
+// need to pass the fetch helper and its output path to the agent.
+func TestReviewWorkflowUsesAgentPreScriptForHumanResolvedThreads(t *testing.T) {
 	workflows := []string{
 		".github/workflows/reusable-dispatch.yml",
 		".github/workflows/reusable-review.yml",
@@ -1423,39 +1423,20 @@ func TestReviewCLIInstallModeDetection(t *testing.T) {
 				start := strings.Index(workflow, "\n  review:\n")
 				require.NotEqual(t, -1, start, "review job must be present")
 				section = workflow[start:]
+				if end := strings.Index(section, "\n  fix:\n"); end != -1 {
+					section = section[:end]
+				}
 			}
 
-			detect := strings.Index(section, "- name: Detect review CLI install mode")
-			checkout := strings.Index(section, "- name: Checkout upstream defaults")
-			require.NotEqual(t, -1, detect, "review CLI mode detection step must be present")
-			require.NotEqual(t, -1, checkout, "upstream defaults checkout step must be present")
-			assert.Less(t, detect, checkout,
-				"review CLI mode must be detected before upstream defaults are checked out")
-			require.Contains(t, section, "if [[ -f .fullsend/bin/fullsend ]]; then")
-			require.Contains(t, section, `echo "mode=vendored" >> "${GITHUB_OUTPUT}"`)
-			require.Contains(t, section, `echo "mode=upstream" >> "${GITHUB_OUTPUT}"`)
-			require.Contains(t, section, "mode: ${{ steps.review-cli-mode.outputs.mode }}")
-			assert.NotContains(t, section, "mode: ${{ inputs.install_mode == 'per-repo' && 'vendored' || 'upstream' }}")
+			assert.Contains(t, section, "HUMAN_RESOLVED_FETCH_SCRIPT:")
+			assert.Contains(t, section, "HUMAN_RESOLVED_FILE:")
+			assert.Contains(t, section, "FULLSEND_APP_SET:")
+			assert.NotContains(t, section, "Detect review CLI install mode")
+			assert.NotContains(t, section, "Install fullsend CLI for review context")
+			assert.NotContains(t, section, "steps.install-fullsend")
+			assert.NotContains(t, section, "FULLSEND_BIN:")
 		})
 	}
-}
-
-// TestReviewCLIInstallersUseDistinctSourceDirs protects the review job from
-// reusing the source checkout created by the context-fetch installer. Both
-// installers can build from source for an unreleased workflow SHA, and each
-// must be able to initialize its own git repository.
-func TestReviewCLIInstallersUseDistinctSourceDirs(t *testing.T) {
-	cliAction, err := os.ReadFile(filepath.Join("..", "..", ".github/actions/install-fullsend-cli/action.yml"))
-	require.NoError(t, err)
-	rootAction, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
-	require.NoError(t, err)
-
-	assert.Contains(t, string(cliAction), `SRC="${RUNNER_TEMP}/fullsend-cli-src"`)
-	assert.Contains(t, string(rootAction), `SRC="${RUNNER_TEMP}/fullsend-agent-src"`)
-	assert.NotEqual(t,
-		"${RUNNER_TEMP}/fullsend-cli-src",
-		"${RUNNER_TEMP}/fullsend-agent-src",
-		"context and agent installers must not share a source checkout")
 }
 
 // TestRoutingLabelPrefixDrift validates that every TRIGGERING_LABEL comparison

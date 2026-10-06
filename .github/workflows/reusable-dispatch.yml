@@ -917,19 +917,6 @@ jobs:
           persist-credentials: false
           allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
 
-      - name: Detect review CLI install mode
-        id: review-cli-mode
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Detect the caller's binary before upstream defaults can populate
-          # .defaults/action.yml and make every checkout look vendored.
-          if [[ -f .fullsend/bin/fullsend ]]; then
-            echo "mode=vendored" >> "${GITHUB_OUTPUT}"
-          else
-            echo "mode=upstream" >> "${GITHUB_OUTPUT}"
-          fi
-
       - name: Checkout upstream defaults
         if: hashFiles('.defaults/action.yml', '.fullsend/.defaults/action.yml') == ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -957,16 +944,6 @@ jobs:
           role: review
           repos: ${{ steps.workspace.outputs.repo_name }}
           mint_url: ${{ inputs.mint_url }}
-
-      - name: Install fullsend CLI for review context
-        id: install-fullsend
-        uses: ./.defaults/.github/actions/install-fullsend-cli
-        with:
-          mode: ${{ steps.review-cli-mode.outputs.mode }}
-          vendored_path: .fullsend/bin/fullsend
-          workflow_repository: ${{ job.workflow_repository }}
-          workflow_sha: ${{ job.workflow_sha }}
-          github_token: ${{ steps.app-token.outputs.token }}
 
       - name: Checkout target repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1013,7 +990,6 @@ jobs:
           PRIOR_REVIEW_SHA: ${{ steps.prior-review.outputs.prior_sha }}
           PRIOR_REVIEW_FILE: ${{ steps.prior-review.outputs.prior_review_file }}
           PRIOR_REVIEW_PROVENANCE: ${{ steps.prior-review.outputs.prior_review_provenance }}
-          FULLSEND_BIN: ${{ steps.install-fullsend.outputs.fullsend-path }}
           FULLSEND_APP_SET: ${{ vars.FULLSEND_APP_SET }}
           HUMAN_RESOLVED_FETCH_SCRIPT: ${{ inputs.install_mode == 'per-repo' && '.fullsend/scripts/pre-fetch-resolved-threads.sh' || '' }}
           HUMAN_RESOLVED_FILE: ${{ github.workspace }}/human-resolved-threads.json
