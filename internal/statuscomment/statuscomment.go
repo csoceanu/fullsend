@@ -287,7 +287,7 @@ func (n *Notifier) PostStart(ctx context.Context, description string) error {
 	if postReaction {
 		id, err := n.addReaction(ctx, "eyes")
 		if err != nil {
-			if forge.IsNotSupported(err) && commentFallbackEnabled(n.cfg.Comment.Start) && n.cfg.Comment.Completion != "on_failure" {
+			if forge.IsNotSupported(err) && n.startCommentID == "" && commentFallbackEnabled(n.cfg.Comment.Start) && n.cfg.Comment.Completion != "on_failure" {
 				body := n.buildStartBody(description)
 				comment, commentErr := createStatusComment(ctx, n.client, n.project, n.number, tracker.Body(body), n.marker, false)
 				if commentErr != nil {
@@ -366,11 +366,6 @@ func (n *Notifier) PostCompletionWithDetail(ctx context.Context, description, st
 	cleanupComment := !postComment && n.startCommentID != ""
 	cleanupReaction := n.startReactionID != 0
 	postReaction := shouldPostReactionCompletion(n.cfg.Reaction.Completion, status)
-	if postReaction && n.reactor == nil && commentFallbackEnabled(n.cfg.Comment.Completion) {
-		postComment = true
-		postReaction = false
-	}
-
 	if postComment || cleanupComment || cleanupReaction || postReaction {
 		if err := n.refreshClient(ctx); err != nil {
 			if postComment {
@@ -379,6 +374,11 @@ func (n *Notifier) PostCompletionWithDetail(ctx context.Context, description, st
 			n.warnf("failed to mint token for completion: %v", err)
 			return nil
 		}
+	}
+	if postReaction && n.reactor == nil && commentFallbackEnabled(n.cfg.Comment.Completion) &&
+		(n.cfg.Comment.Completion == "" || shouldPostCompletion(n.cfg.Comment.Completion, status)) {
+		postComment = true
+		postReaction = false
 	}
 
 	if !postComment {

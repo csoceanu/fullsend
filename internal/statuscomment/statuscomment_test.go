@@ -1900,6 +1900,42 @@ func TestPostCompletion_ReactionNoStartReaction(t *testing.T) {
 	assert.Equal(t, "+1", fc.AddedReactions[0].Content)
 }
 
+func TestPostCompletion_OnFailure_SuccessWithNoReactorDoesNotPostComment(t *testing.T) {
+	jiraFake, err := tracker.NewFakeJiraClient("https://acme.atlassian.net")
+	require.NoError(t, err)
+	cfg := config.StatusNotificationConfig{
+		Comment: config.CommentNotificationConfig{Completion: "on_failure"},
+	}
+	n := New(jiraFake, cfg, "PROJ", 123, "https://ci/run/42", "abc123", "run-42")
+	n.now = fixedTime
+
+	require.NoError(t, n.PostCompletion(context.Background(), "Working", "success"))
+	comments, err := jiraFake.ListComments(context.Background(), "PROJ", 123)
+	require.NoError(t, err)
+	assert.Empty(t, comments, "successful on_failure completion must not fall back to a comment")
+}
+
+func TestPostCompletion_RefreshesClientBeforeReactionFallback(t *testing.T) {
+	initial := forge.NewFakeClient()
+	fresh := forge.NewFakeClient()
+	initialTracker := tracker.NewForgeClient(initial)
+	n := New(nonReactingClient{Client: initialTracker}, config.StatusNotificationConfig{
+		Comment:  config.CommentNotificationConfig{Start: "disabled", Completion: "disabled"},
+		Reaction: config.ReactionNotificationConfig{Start: "disabled", Completion: "enabled"},
+	}, "org/repo", 7, "https://ci/run/42", "abc123", "run-42")
+	n.now = fixedTime
+	n.SetClientFactory(func(context.Context) (tracker.Client, error) {
+		return tracker.NewForgeClient(fresh), nil
+	})
+
+	require.NoError(t, n.PostStart(context.Background(), "Working"))
+	require.NoError(t, n.PostCompletion(context.Background(), "Working", "success"))
+
+	assert.Len(t, fresh.AddedReactions, 1, "completion reaction should use the refreshed client")
+	assert.Empty(t, fresh.IssueComments)
+	assert.Empty(t, initial.AddedReactions)
+}
+
 func TestPostStart_ReactionErrorIsNonFatal(t *testing.T) {
 	fc := forge.NewFakeClient()
 	fc.Errors = map[string]error{"AddIssueReaction": fmt.Errorf("boom")}
@@ -1921,6 +1957,20 @@ func TestPostStart_UnsupportedReactionFallsBackToComment(t *testing.T) {
 	require.NoError(t, n.PostStart(context.Background(), "Working"))
 	require.Len(t, fc.IssueComments["org/repo/7"], 1)
 	assert.Empty(t, fc.AddedReactions)
+}
+
+func TestPostStart_UnsupportedReactionDoesNotDuplicateExplicitComment(t *testing.T) {
+	fc := forge.NewFakeClient()
+	fc.Errors["AddIssueReaction"] = forge.ErrNotSupported
+	cfg := config.StatusNotificationConfig{
+		Comment: config.CommentNotificationConfig{Start: "enabled"},
+	}
+	n, fc := newTestNotifier(fc, cfg)
+
+	require.NoError(t, n.PostStart(context.Background(), "Working"))
+	comments := fc.IssueComments["org/repo/7"]
+	require.Len(t, comments, 1, "unsupported reaction must not create a second start comment")
+	assert.Equal(t, "1", n.startCommentID)
 }
 
 func TestPostCompletion_UnsupportedReactionFallsBackToComment(t *testing.T) {
