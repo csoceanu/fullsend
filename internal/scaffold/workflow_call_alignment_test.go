@@ -1404,13 +1404,12 @@ func TestShimLabeledEventFiltering(t *testing.T) {
 }
 
 // TestReviewWorkflowUsesAgentPreScriptForHumanResolvedThreads protects the
-// review paths from growing a second CLI installation. The root action already
-// installs fullsend before the agent pre-script runs, so the workflows only
-// need to pass the fetch helper and its output path to the agent.
+// per-repo review path from growing a second CLI installation. The root action
+// already installs fullsend before the agent pre-script runs, so the workflow
+// only needs to pass the fetch helper and its output path to the agent.
 func TestReviewWorkflowUsesAgentPreScriptForHumanResolvedThreads(t *testing.T) {
 	workflows := []string{
 		".github/workflows/reusable-dispatch.yml",
-		".github/workflows/reusable-review.yml",
 	}
 
 	for _, workflowPath := range workflows {
@@ -1437,6 +1436,12 @@ func TestReviewWorkflowUsesAgentPreScriptForHumanResolvedThreads(t *testing.T) {
 			assert.NotContains(t, section, "FULLSEND_BIN:")
 		})
 	}
+
+	perOrgContent, err := os.ReadFile(filepath.Join("..", "..", ".github/workflows/reusable-review.yml"))
+	require.NoError(t, err)
+	perOrgAgent := extractStepSection(t, string(perOrgContent), "Run review agent")
+	assert.NotContains(t, perOrgAgent, "HUMAN_RESOLVED_FETCH_SCRIPT:")
+	assert.NotContains(t, perOrgAgent, "HUMAN_RESOLVED_FILE:")
 }
 
 // TestRoutingLabelPrefixDrift validates that every TRIGGERING_LABEL comparison
