@@ -74,6 +74,19 @@ func TestCreateIssue(t *testing.T) {
 
 func TestListPullRequestReviewThreads(t *testing.T) {
 	client, mux := setupTest(t)
+	actorRequests := map[string]int{}
+	mux.HandleFunc("/api/v4/users/", func(w http.ResponseWriter, r *http.Request) {
+		actorID := strings.TrimPrefix(r.URL.Path, "/api/v4/users/")
+		actorRequests[actorID]++
+		switch actorID {
+		case "10":
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": 10, "username": "botuser", "bot": true})
+		case "20":
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": 20, "username": "reviewer", "bot": false})
+		default:
+			writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "404 User Not Found"})
+		}
+	})
 	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/42/discussions", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "100", r.URL.Query().Get("per_page"))
 		assert.Equal(t, "1", r.URL.Query().Get("page"))
@@ -84,8 +97,8 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 					{
 						"id": 7, "body": "Please update this", "created_at": "2026-10-06T10:00:00Z",
 						"resolvable": true, "resolved": true,
-						"author":      map[string]any{"username": "botuser", "bot": true},
-						"resolved_by": map[string]any{"username": "reviewer", "bot": false},
+						"author":      map[string]any{"id": 10, "username": "botuser"},
+						"resolved_by": map[string]any{"id": 20, "username": "reviewer"},
 						"position":    map[string]any{"new_path": "main.go", "old_path": "main.go", "new_line": 17, "old_line": 16},
 					},
 				},
@@ -93,7 +106,7 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 			{
 				"id": "discussion-2",
 				"notes": []map[string]any{
-					{"id": 8, "body": "unresolved", "resolvable": true, "resolved": false, "author": map[string]any{"username": "reviewer", "bot": false}},
+					{"id": 8, "body": "unresolved", "resolvable": true, "resolved": false, "author": map[string]any{"id": 20, "username": "reviewer"}, "position": map[string]any{"new_path": "unresolved.go", "new_line": 3}},
 				},
 			},
 			{
@@ -101,8 +114,8 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 				"notes": []map[string]any{
 					{
 						"id": 9, "body": "resolved without actor type", "resolvable": true, "resolved": true,
-						"author":      map[string]any{"username": "reviewer"},
-						"resolved_by": map[string]any{"username": "unknown-resolver"},
+						"author":      map[string]any{"id": 20, "username": "reviewer"},
+						"resolved_by": map[string]any{"id": 30, "username": "unknown-resolver"},
 					},
 				},
 			},
@@ -120,8 +133,14 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	assert.Equal(t, 17, *got.Threads[0].Line)
 	assert.Equal(t, "Bot", got.Threads[0].Comments[0].AuthorType)
 	assert.False(t, got.Threads[1].IsResolved)
+	assert.Equal(t, "unresolved.go", got.Threads[1].Path, "position data is retained before unresolved notes are skipped")
+	require.NotNil(t, got.Threads[1].Line)
+	assert.Equal(t, 3, *got.Threads[1].Line)
 	assert.True(t, got.Threads[2].IsResolved)
 	assert.Equal(t, "Unknown", got.Threads[2].ResolvedByType)
+	assert.Equal(t, 1, actorRequests["10"])
+	assert.Equal(t, 1, actorRequests["20"], "the actor lookup should be cached per request")
+	assert.Equal(t, 1, actorRequests["30"])
 }
 
 func TestCreateIssue_NoLabels(t *testing.T) {

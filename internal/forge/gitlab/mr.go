@@ -770,6 +770,11 @@ func (c *LiveClient) ListPullRequestReviews(ctx context.Context, owner, repo str
 	return result, nil
 }
 
+type gitlabDiscussionActor struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+}
+
 // ListPullRequestReviewThreads maps GitLab merge-request discussions to the
 // common review-thread model. A discussion is resolved when one of its
 // resolvable notes is marked resolved; the resolver and note authors are
@@ -777,6 +782,28 @@ func (c *LiveClient) ListPullRequestReviews(ctx context.Context, owner, repo str
 func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, repo string, number int) (forge.ReviewThreadPage, error) {
 	proj := projectPath(owner, repo)
 	result := forge.ReviewThreadPage{}
+	actorTypes := make(map[int]string)
+	lookupActorType := func(actor *gitlabDiscussionActor) string {
+		if actor == nil || actor.ID == 0 {
+			return "Unknown"
+		}
+		if actorType, ok := actorTypes[actor.ID]; ok {
+			return actorType
+		}
+
+		actorType := "Unknown"
+		resp, err := c.get(ctx, fmt.Sprintf("/users/%d", actor.ID))
+		if err == nil {
+			var user struct {
+				Bot *bool `json:"bot"`
+			}
+			if decodeErr := decodeJSON(resp, &user); decodeErr == nil {
+				actorType = gitlabActorType(user.Bot)
+			}
+		}
+		actorTypes[actor.ID] = actorType
+		return actorType
+	}
 
 	for page := 1; page <= 20; page++ {
 		path := fmt.Sprintf("/projects/%s/merge_requests/%d/discussions?per_page=100&page=%d",
@@ -789,21 +816,15 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 		var discussions []struct {
 			ID    string `json:"id"`
 			Notes []struct {
-				ID         int    `json:"id"`
-				Body       string `json:"body"`
-				System     bool   `json:"system"`
-				CreatedAt  string `json:"created_at"`
-				Resolvable bool   `json:"resolvable"`
-				Resolved   bool   `json:"resolved"`
-				Author     struct {
-					Username string `json:"username"`
-					Bot      *bool  `json:"bot"`
-				} `json:"author"`
-				ResolvedBy *struct {
-					Username string `json:"username"`
-					Bot      *bool  `json:"bot"`
-				} `json:"resolved_by"`
-				Position *struct {
+				ID         int                    `json:"id"`
+				Body       string                 `json:"body"`
+				System     bool                   `json:"system"`
+				CreatedAt  string                 `json:"created_at"`
+				Resolvable bool                   `json:"resolvable"`
+				Resolved   bool                   `json:"resolved"`
+				Author     gitlabDiscussionActor  `json:"author"`
+				ResolvedBy *gitlabDiscussionActor `json:"resolved_by"`
+				Position   *struct {
 					NewPath string `json:"new_path"`
 					OldPath string `json:"old_path"`
 					NewLine *int   `json:"new_line"`
@@ -824,19 +845,10 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 
 				thread.Comments = append(thread.Comments, forge.ReviewThreadComment{
 					Author:     note.Author.Username,
-					AuthorType: gitlabActorType(note.Author.Bot),
+					AuthorType: lookupActorType(&note.Author),
 					Body:       note.Body,
 					CreatedAt:  note.CreatedAt,
 				})
-
-				if !note.Resolvable || !note.Resolved {
-					continue
-				}
-				thread.IsResolved = true
-				if note.ResolvedBy != nil {
-					thread.ResolvedBy = note.ResolvedBy.Username
-					thread.ResolvedByType = gitlabActorType(note.ResolvedBy.Bot)
-				}
 				if note.Position != nil {
 					thread.Path = note.Position.NewPath
 					if thread.Path == "" {
@@ -844,6 +856,15 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 					}
 					thread.Line = note.Position.NewLine
 					thread.OriginalLine = note.Position.OldLine
+				}
+
+				if !note.Resolvable || !note.Resolved {
+					continue
+				}
+				thread.IsResolved = true
+				if note.ResolvedBy != nil {
+					thread.ResolvedBy = note.ResolvedBy.Username
+					thread.ResolvedByType = lookupActorType(note.ResolvedBy)
 				}
 			}
 			result.Threads = append(result.Threads, thread)
