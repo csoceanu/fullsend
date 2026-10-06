@@ -299,7 +299,9 @@ func CleanupScenario(w *world.World) {
 	// Restore the pre-scenario status notification config so the next
 	// scenario on this slot is not affected by leaked settings.
 	if w.ReactionNotificationsOverridden {
-		if err := RestoreReactionNotifications(w); err != nil {
+		if err := cleanupRetry(w.Logf, "restore status notifications", func() error {
+			return RestoreReactionNotifications(w)
+		}); err != nil {
 			worldLogf(w, "behaviour cleanup: restore status notifications: %v", err)
 		}
 	}

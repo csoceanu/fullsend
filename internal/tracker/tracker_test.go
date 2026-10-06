@@ -3,11 +3,21 @@ package tracker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
 )
+
+func TestIsNotSupported(t *testing.T) {
+	if !IsNotSupported(forge.ErrNotSupported) || !IsNotSupported(fmt.Errorf("wrapped: %w", forge.ErrNotSupported)) {
+		t.Fatal("IsNotSupported should recognize direct and wrapped ErrNotSupported")
+	}
+	if IsNotSupported(forge.ErrNotFound) || IsNotSupported(nil) {
+		t.Fatal("IsNotSupported should reject unrelated and nil errors")
+	}
+}
 
 func TestSplitProject(t *testing.T) {
 	tests := []struct {

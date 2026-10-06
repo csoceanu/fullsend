@@ -19,6 +19,8 @@ package tracker
 import (
 	"context"
 	"errors"
+
+	"github.com/fullsend-ai/fullsend/internal/forge"
 )
 
 // ErrNotFound indicates a requested issue or comment was not found.
@@ -32,6 +34,13 @@ var ErrNotFound = errors.New("not found")
 // was not found.
 func IsNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
+}
+
+// IsNotSupported reports whether a tracker capability is unavailable. The
+// sentinel is defined by the forge adapters, but callers stay behind the
+// tracker abstraction rather than depending on a forge implementation.
+func IsNotSupported(err error) bool {
+	return errors.Is(err, forge.ErrNotSupported)
 }
 
 // Body is Markdown-formatted issue/comment text, as produced by GitHub and

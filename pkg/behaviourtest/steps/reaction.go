@@ -89,6 +89,35 @@ func RestoreReactionNotifications(w *world.World) error {
 	return nil
 }
 
+// DisableReactionNotifications is retained for compatibility with external
+// behaviour-test callers. Deprecated: use RestoreReactionNotifications for
+// scenario cleanup so the repository returns to its pre-scenario state.
+func DisableReactionNotifications(w *world.World) error {
+	cfgPath := filepath.Join(".fullsend", "config.yaml")
+	cfgData, err := w.SCM.GetFileContent(context.Background(), w.Org, w.RepoName, cfgPath)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+	cfg, err := config.ParsePerRepoConfigWriter(cfgData)
+	if err != nil {
+		return fmt.Errorf("parsing config: %w", err)
+	}
+	cfg.SetStatusNotifications(&config.StatusNotificationConfig{
+		Reaction: config.ReactionNotificationConfig{
+			Start:      "disabled",
+			Completion: "disabled",
+		},
+	})
+	merged, err := cfg.Marshal()
+	if err != nil {
+		return err
+	}
+	if err := w.SCM.CommitFile(context.Background(), w.Org, w.RepoName, cfgPath, "behaviour: disable reaction notifications", merged); err != nil {
+		return fmt.Errorf("updating config: %w", err)
+	}
+	return nil
+}
+
 func thenIssueHasReaction(w *world.World, content string) error {
 	if w.IssueNumber == 0 {
 		return fmt.Errorf("no issue created")

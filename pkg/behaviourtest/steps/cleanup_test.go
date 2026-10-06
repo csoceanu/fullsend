@@ -104,6 +104,41 @@ func TestRestoreReactionNotifications_RestoresOriginalConfig(t *testing.T) {
 	assert.Nil(t, w.ReactionNotificationsOriginal)
 }
 
+func TestDisableReactionNotifications_CompatibilityWrapper(t *testing.T) {
+	scmDriver := &fakeCleanupSCM{fileContent: []byte("roles: [review]\n")}
+	w := &world.World{Org: "org", RepoName: "repo", SCM: scmDriver}
+
+	require.NoError(t, DisableReactionNotifications(w))
+	assert.Contains(t, string(scmDriver.committedContent), "start: disabled")
+	assert.Contains(t, string(scmDriver.committedContent), "completion: disabled")
+}
+
+func TestCleanupScenario_RetriesRestoreReactionNotifications(t *testing.T) {
+	speedUpCleanupRetries(t)
+	var calls int
+	scmDriver := &fakeRetryCleanupSCM{
+		getFileContentFn: func(context.Context, string, string, string) ([]byte, error) {
+			return []byte("roles: [review]\n"), nil
+		},
+		commitFileFn: func(context.Context, string, string, string, string, []byte) error {
+			calls++
+			if calls == 1 {
+				return &fakeTransientError{msg: "temporary commit failure"}
+			}
+			return nil
+		},
+	}
+	w := &world.World{
+		Org:                             "org",
+		RepoName:                        "repo",
+		SCM:                             scmDriver,
+		ReactionNotificationsOverridden: true,
+	}
+
+	CleanupScenario(w)
+	assert.Equal(t, 2, calls, "should retry restoring reaction notifications")
+}
+
 func TestCleanupScenario_DeletesForkBranch(t *testing.T) {
 	t.Parallel()
 
@@ -1101,9 +1136,10 @@ func (e *fakeTransientError) IsTransient() bool { return true }
 // function callbacks for methods exercised in retry tests. Methods
 // without callbacks return nil.
 type fakeRetryCleanupSCM struct {
-	closeIssueFn func(ctx context.Context, owner, repo string, number int) error
-	commitFileFn func(ctx context.Context, owner, repo, path, msg string, content []byte) error
-	deleteRepoFn func(ctx context.Context, owner, repo string) error
+	closeIssueFn     func(ctx context.Context, owner, repo string, number int) error
+	commitFileFn     func(ctx context.Context, owner, repo, path, msg string, content []byte) error
+	deleteRepoFn     func(ctx context.Context, owner, repo string) error
+	getFileContentFn func(ctx context.Context, owner, repo, path string) ([]byte, error)
 }
 
 func (f *fakeRetryCleanupSCM) CloseIssue(ctx context.Context, owner, repo string, number int) error {
@@ -1151,7 +1187,10 @@ func (f *fakeRetryCleanupSCM) GetIssue(context.Context, string, string, int) (*f
 	return nil, nil
 }
 
-func (f *fakeRetryCleanupSCM) GetFileContent(context.Context, string, string, string) ([]byte, error) {
+func (f *fakeRetryCleanupSCM) GetFileContent(ctx context.Context, owner, repo, path string) ([]byte, error) {
+	if f.getFileContentFn != nil {
+		return f.getFileContentFn(ctx, owner, repo, path)
+	}
 	return nil, nil
 }
 

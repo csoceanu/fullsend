@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/fullsend-ai/fullsend/internal/config"
-	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/fullsend-ai/fullsend/internal/tracker"
 )
 
@@ -287,7 +286,7 @@ func (n *Notifier) PostStart(ctx context.Context, description string) error {
 	if postReaction {
 		id, err := n.addReaction(ctx, "eyes")
 		if err != nil {
-			if forge.IsNotSupported(err) && n.startCommentID == "" && commentFallbackEnabled(n.cfg.Comment.Start) && n.cfg.Comment.Completion != "on_failure" {
+			if tracker.IsNotSupported(err) && n.startCommentID == "" && commentFallbackEnabled(n.cfg.Comment.Start) && n.cfg.Comment.Completion != "on_failure" {
 				body := n.buildStartBody(description)
 				comment, commentErr := createStatusComment(ctx, n.client, n.project, n.number, tracker.Body(body), n.marker, false)
 				if commentErr != nil {
@@ -462,19 +461,21 @@ func updateStatusComment(ctx context.Context, client tracker.Client, project str
 // notification, so there's no notification-noise reason to keep the start
 // reaction around across this swap. Errors are logged, not returned: a
 // reaction is a nice-to-have signal, not something that should fail the
-// run. Assumes the caller has already refreshed n.client if needed.
+// run. Assumes the caller has already refreshed n.client if needed. The
+// returned boolean reports whether any reaction operation was rejected as
+// unsupported, allowing the caller to use the comment fallback.
 func (n *Notifier) postCompletionReaction(ctx context.Context, status string, cleanup, post bool) bool {
 	unsupported := false
 	if cleanup {
 		if err := n.deleteReaction(ctx, n.startReactionID); err != nil {
-			unsupported = forge.IsNotSupported(err)
+			unsupported = tracker.IsNotSupported(err)
 			n.warnf("failed to remove start reaction: %v", err)
 		}
 		n.startReactionID = 0
 	}
 	if post {
 		if _, err := n.addReaction(ctx, reactionForStatus(status)); err != nil {
-			unsupported = unsupported || forge.IsNotSupported(err)
+			unsupported = unsupported || tracker.IsNotSupported(err)
 			n.warnf("failed to add completion reaction: %v", err)
 		}
 	}
