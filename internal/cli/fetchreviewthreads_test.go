@@ -16,7 +16,7 @@ import (
 func TestFetchReviewThreadsCommand(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v3/graphql", r.URL.Path)
+		assert.Equal(t, "/api/graphql", r.URL.Path)
 		_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"id":"thread-1","isResolved":true,"path":"main.go","line":12,"originalLine":11,"resolvedBy":{"login":"reviewer"},"comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}}]}}}}}`))
 	}))
 	defer srv.Close()

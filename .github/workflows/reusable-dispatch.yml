@@ -917,6 +917,19 @@ jobs:
           persist-credentials: false
           allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
 
+      - name: Detect review CLI install mode
+        id: review-cli-mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Detect the caller's binary before upstream defaults can populate
+          # .defaults/action.yml and make every checkout look vendored.
+          if [[ -f .fullsend/bin/fullsend ]]; then
+            echo "mode=vendored" >> "${GITHUB_OUTPUT}"
+          else
+            echo "mode=upstream" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Checkout upstream defaults
         if: hashFiles('.defaults/action.yml', '.fullsend/.defaults/action.yml') == ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -944,17 +957,6 @@ jobs:
           role: review
           repos: ${{ steps.workspace.outputs.repo_name }}
           mint_url: ${{ inputs.mint_url }}
-
-      - name: Detect review CLI install mode
-        id: review-cli-mode
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f .defaults/action.yml || -f .fullsend/.defaults/action.yml ]]; then
-            echo "mode=vendored" >> "${GITHUB_OUTPUT}"
-          else
-            echo "mode=upstream" >> "${GITHUB_OUTPUT}"
-          fi
 
       - name: Install fullsend CLI for review context
         id: install-fullsend
@@ -991,6 +993,7 @@ jobs:
 
       - name: Pre-fetch human-resolved review threads
         id: resolved-threads
+        if: inputs.install_mode == 'per-repo'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SOURCE_REPO: ${{ github.repository }}
@@ -1000,8 +1003,7 @@ jobs:
           ORG_NAME: ${{ github.repository_owner }}
           FULLSEND_APP_SET: ${{ vars.FULLSEND_APP_SET }}
           FULLSEND_BIN: ${{ steps.install-fullsend.outputs.fullsend-path }}
-          FULLSEND_DIR: ${{ inputs.install_mode == 'per-repo' && '.fullsend' || '' }}
-        run: bash "${FULLSEND_DIR:+$FULLSEND_DIR/}scripts/pre-fetch-resolved-threads.sh"
+        run: bash .fullsend/scripts/pre-fetch-resolved-threads.sh
 
       - name: Setup agent environment
         env:

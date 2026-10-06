@@ -46,6 +46,7 @@ if [[ "$1" == "fetch-review-threads" ]]; then
       line,
       original_line: .originalLine,
       resolved_by: (.resolvedBy.login // ""),
+      resolved_by_type: (.resolvedBy.__typename // ""),
       comments_truncated: (.comments.pageInfo.hasNextPage // false),
       comments: [(.comments.nodes // [])[] | {
         author: .author.login,
@@ -157,6 +158,33 @@ run_test() {
   fi
 
   echo "PASS: ${test_name}"
+}
+
+run_unsuffixed_bot_resolver_test() {
+  local test_name="$1"
+  local resolver_login="$2"
+  local app_set="${3:-}"
+  local finding_login="test-org-review"
+  if [[ -n "${app_set}" ]]; then
+    finding_login="${app_set}-review"
+  fi
+
+  run_test "${test_name}" \
+    "$(make_graphql_response "[{
+      \"id\": \"T_${test_name}\",
+      \"isResolved\": true,
+      \"path\": \"resolver.go\",
+      \"line\": 7,
+      \"originalLine\": 7,
+      \"resolvedBy\": {\"login\": \"${resolver_login}\", \"__typename\": \"Bot\"},
+      \"comments\": {
+        \"pageInfo\": {\"hasNextPage\": false},
+        \"nodes\": [{\"author\": {\"login\": \"${finding_login}\", \"__typename\": \"Bot\"}, \"body\": \"Finding\", \"createdAt\": \"2026-09-01T10:00:00Z\"}]
+      }
+    }]")" \
+    0 \
+    "" \
+    "${app_set}"
 }
 
 # --- Test cases ---
@@ -349,13 +377,20 @@ run_test "shared-bot-resolved-excluded" \
   "$(make_graphql_response "${THREAD_SHARED_BOT_RESOLVED}")" \
   0
 
-# 10. Metadata fields are populated.
+# 10. Unsuffixed GraphQL bot resolvers are excluded by actor type, including
+# the organization, shared, custom app-set, and unrelated bot identities.
+run_unsuffixed_bot_resolver_test "org-unsuffixed-bot-resolved-excluded" "test-org-review"
+run_unsuffixed_bot_resolver_test "shared-unsuffixed-bot-resolved-excluded" "fullsend-ai-review"
+run_unsuffixed_bot_resolver_test "custom-unsuffixed-bot-resolved-excluded" "custom-review" "custom"
+run_unsuffixed_bot_resolver_test "unrelated-unsuffixed-bot-resolved-excluded" "dependabot"
+
+# 11. Metadata fields are populated.
 run_test "metadata-populated" \
   "$(make_graphql_response "${THREAD_HUMAN_RESOLVED}")" \
   1 \
   '.metadata.pr_number == 42 and .metadata.repo == "test-org/test-repo" and .metadata.thread_count > 0'
 
-# 11. Incomplete comment page — skip rather than guess hidden context.
+# 12. Incomplete comment page — skip rather than guess hidden context.
 THREAD_INCOMPLETE_COMMENTS='[{
   "id": "T_11",
   "isResolved": true,
@@ -375,7 +410,7 @@ run_test "incomplete-comment-page-excluded" \
   "$(make_graphql_response "${THREAD_INCOMPLETE_COMMENTS}")" \
   0
 
-# 12. Other GitHub App resolver (login ends with [bot]) — excluded.
+# 13. Other GitHub App resolver (login ends with [bot]) — excluded.
 THREAD_DEPENDABOT_RESOLVED='[{
   "id": "T_12",
   "isResolved": true,
@@ -395,7 +430,7 @@ run_test "other-bot-resolved-excluded" \
   "$(make_graphql_response "${THREAD_DEPENDABOT_RESOLVED}")" \
   0
 
-# 13. Human-only resolved threads are not review findings.
+# 14. Human-only resolved threads are not review findings.
 THREAD_HUMAN_ONLY='[{
   "id": "T_HUMAN_ONLY",
   "isResolved": true,
@@ -415,7 +450,7 @@ run_test "human-only-resolved-excluded" \
   "$(make_graphql_response "${THREAD_HUMAN_ONLY}")" \
   0
 
-# 14. Custom Fullsend App-set bot identities are recognized.
+# 15. Custom Fullsend App-set bot identities are recognized.
 THREAD_CUSTOM_APP='[{
   "id": "T_CUSTOM_APP",
   "isResolved": true,
@@ -437,7 +472,7 @@ run_test "custom-app-set-finding-id" \
   '.resolved_threads[0].finding_id == "f_custom"' \
   "custom"
 
-# 15. Resolver's comment is used, not another human's.
+# 16. Resolver's comment is used, not another human's.
 #     Bob comments but Alice resolves — human_response should be from
 #     Alice (the resolver), and if Alice didn't comment it's silent.
 THREAD_DIFFERENT_COMMENTER='[{

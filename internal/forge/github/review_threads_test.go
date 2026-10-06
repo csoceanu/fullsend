@@ -32,7 +32,7 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 								map[string]any{
 									"id": "PRRT_1", "isResolved": true, "path": "main.go",
 									"line": line, "originalLine": originalLine,
-									"resolvedBy": map[string]any{"login": "reviewer"},
+									"resolvedBy": map[string]any{"login": "reviewer", "__typename": "User"},
 									"comments": map[string]any{
 										"pageInfo": map[string]any{"hasNextPage": true},
 										"nodes": []any{map[string]any{
@@ -63,7 +63,7 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	assert.Len(t, got.Threads, 2)
 	assert.Equal(t, forge.ReviewThread{
 		ID: "PRRT_1", IsResolved: true, Path: "main.go", Line: &line,
-		OriginalLine: &originalLine, ResolvedBy: "reviewer",
+		OriginalLine: &originalLine, ResolvedBy: "reviewer", ResolvedByType: "User",
 		Comments: []forge.ReviewThreadComment{{
 			Author: "reviewer", AuthorType: "User", Body: "please update this", CreatedAt: "2026-10-04T10:00:00Z",
 		}}, CommentsTruncated: true,

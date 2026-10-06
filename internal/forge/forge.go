@@ -485,6 +485,7 @@ type ReviewThread struct {
 	Line              *int                  `json:"line"`
 	OriginalLine      *int                  `json:"original_line"`
 	ResolvedBy        string                `json:"resolved_by"`
+	ResolvedByType    string                `json:"resolved_by_type"`
 	Comments          []ReviewThreadComment `json:"comments"`
 	CommentsTruncated bool                  `json:"comments_truncated"`
 }

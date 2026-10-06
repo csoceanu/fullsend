@@ -83,9 +83,9 @@ truncated=$(echo "${response}" | jq -r '.truncated // false' 2>/dev/null) || tru
 #   - resolution_context classification: explicit_dismissal when the
 #     resolver left a comment, silent_resolution otherwise
 #
-# The forge client normalizes the GraphQL actor type into author_type. Bots
-# are author_type "Bot" on comments, while resolvedBy is filtered by the
-# GitHub App login suffix.
+# The forge client preserves GraphQL actor types for both comments and
+# resolvedBy. Only a positively identified User may provide a human
+# resolution; login suffixes are retained as a defense-in-depth check.
 
 RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
   --arg bot "${REVIEW_BOT}" \
@@ -97,7 +97,10 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
   '[.[]
     | select(.is_resolved == true)
     | select(.resolved_by != null and .resolved_by != "")
+    | select(.resolved_by_type == "User")
     | select(.resolved_by != $bot and .resolved_by != $shared_bot)
+    | select(.resolved_by != $bot_login and .resolved_by != $shared_bot_login)
+    | select(.resolved_by != $app_set_bot and .resolved_by != $app_set_bot_login)
     | select((.resolved_by | endswith("[bot]")) | not)
     | select((.comments // [] | length) > 0)
     | select((.comments_truncated // false) == false)

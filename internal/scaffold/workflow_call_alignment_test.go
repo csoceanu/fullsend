@@ -1418,13 +1418,24 @@ func TestReviewCLIInstallModeDetection(t *testing.T) {
 			content, err := os.ReadFile(filepath.Join("..", "..", workflowPath))
 			require.NoError(t, err)
 			workflow := string(content)
+			section := workflow
+			if workflowPath == ".github/workflows/reusable-dispatch.yml" {
+				start := strings.Index(workflow, "\n  review:\n")
+				require.NotEqual(t, -1, start, "review job must be present")
+				section = workflow[start:]
+			}
 
-			require.Contains(t, workflow, "- name: Detect review CLI install mode")
-			require.Contains(t, workflow, "if [[ -f .defaults/action.yml || -f .fullsend/.defaults/action.yml ]]; then")
-			require.Contains(t, workflow, `echo "mode=vendored" >> "${GITHUB_OUTPUT}"`)
-			require.Contains(t, workflow, `echo "mode=upstream" >> "${GITHUB_OUTPUT}"`)
-			require.Contains(t, workflow, "mode: ${{ steps.review-cli-mode.outputs.mode }}")
-			assert.NotContains(t, workflow, "mode: ${{ inputs.install_mode == 'per-repo' && 'vendored' || 'upstream' }}")
+			detect := strings.Index(section, "- name: Detect review CLI install mode")
+			checkout := strings.Index(section, "- name: Checkout upstream defaults")
+			require.NotEqual(t, -1, detect, "review CLI mode detection step must be present")
+			require.NotEqual(t, -1, checkout, "upstream defaults checkout step must be present")
+			assert.Less(t, detect, checkout,
+				"review CLI mode must be detected before upstream defaults are checked out")
+			require.Contains(t, section, "if [[ -f .fullsend/bin/fullsend ]]; then")
+			require.Contains(t, section, `echo "mode=vendored" >> "${GITHUB_OUTPUT}"`)
+			require.Contains(t, section, `echo "mode=upstream" >> "${GITHUB_OUTPUT}"`)
+			require.Contains(t, section, "mode: ${{ steps.review-cli-mode.outputs.mode }}")
+			assert.NotContains(t, section, "mode: ${{ inputs.install_mode == 'per-repo' && 'vendored' || 'upstream' }}")
 		})
 	}
 }

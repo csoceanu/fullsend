@@ -306,6 +306,9 @@ func (c *LiveClient) do(ctx context.Context, method, path string, body any, head
 
 func (c *LiveClient) doRequest(ctx context.Context, method, path string, contentLength int64, open func() (io.ReadCloser, error), headers ...requestHeader) (*http.Response, error) {
 	url := c.baseURL + path
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		url = path
+	}
 
 	for attempt := range maxRetries {
 		var reqBody io.Reader
@@ -3650,7 +3653,7 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 						path
 						line
 						originalLine
-						resolvedBy { login }
+						resolvedBy { login __typename }
 						comments(first: 100) {
 							pageInfo { hasNextPage }
 							nodes {
@@ -3673,6 +3676,7 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 		OriginalLine *int   `json:"originalLine"`
 		ResolvedBy   *struct {
 			Login string `json:"login"`
+			Type  string `json:"__typename"`
 		} `json:"resolvedBy"`
 		Comments struct {
 			PageInfo struct {
@@ -3717,7 +3721,11 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 			"number": number,
 			"cursor": cursor,
 		}
-		resp, err := c.post(ctx, "/graphql", map[string]any{"query": query, "variables": variables})
+		graphqlURL := strings.TrimRight(c.baseURL, "/") + "/graphql"
+		if strings.HasSuffix(strings.TrimRight(c.baseURL, "/"), "/api/v3") {
+			graphqlURL = strings.TrimSuffix(strings.TrimRight(c.baseURL, "/"), "/api/v3") + "/api/graphql"
+		}
+		resp, err := c.post(ctx, graphqlURL, map[string]any{"query": query, "variables": variables})
 		if err != nil {
 			return forge.ReviewThreadPage{}, fmt.Errorf("list pull request review threads page %d: %w", page, err)
 		}
@@ -3741,6 +3749,7 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 			}
 			if thread.ResolvedBy != nil {
 				converted.ResolvedBy = thread.ResolvedBy.Login
+				converted.ResolvedByType = thread.ResolvedBy.Type
 			}
 			for _, comment := range thread.Comments.Nodes {
 				converted.Comments = append(converted.Comments, forge.ReviewThreadComment{
