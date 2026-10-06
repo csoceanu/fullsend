@@ -96,12 +96,22 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 					{"id": 8, "body": "unresolved", "resolvable": true, "resolved": false, "author": map[string]any{"username": "reviewer", "bot": false}},
 				},
 			},
+			{
+				"id": "discussion-3",
+				"notes": []map[string]any{
+					{
+						"id": 9, "body": "resolved without actor type", "resolvable": true, "resolved": true,
+						"author":      map[string]any{"username": "reviewer"},
+						"resolved_by": map[string]any{"username": "unknown-resolver"},
+					},
+				},
+			},
 		})
 	})
 
 	got, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
 	require.NoError(t, err)
-	require.Len(t, got.Threads, 2)
+	require.Len(t, got.Threads, 3)
 	assert.Equal(t, "discussion-1", got.Threads[0].ID)
 	assert.True(t, got.Threads[0].IsResolved)
 	assert.Equal(t, "reviewer", got.Threads[0].ResolvedBy)
@@ -110,6 +120,8 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	assert.Equal(t, 17, *got.Threads[0].Line)
 	assert.Equal(t, "Bot", got.Threads[0].Comments[0].AuthorType)
 	assert.False(t, got.Threads[1].IsResolved)
+	assert.True(t, got.Threads[2].IsResolved)
+	assert.Equal(t, "Unknown", got.Threads[2].ResolvedByType)
 }
 
 func TestCreateIssue_NoLabels(t *testing.T) {

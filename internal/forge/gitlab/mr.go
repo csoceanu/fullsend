@@ -797,11 +797,11 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 				Resolved   bool   `json:"resolved"`
 				Author     struct {
 					Username string `json:"username"`
-					Bot      bool   `json:"bot"`
+					Bot      *bool  `json:"bot"`
 				} `json:"author"`
 				ResolvedBy *struct {
 					Username string `json:"username"`
-					Bot      bool   `json:"bot"`
+					Bot      *bool  `json:"bot"`
 				} `json:"resolved_by"`
 				Position *struct {
 					NewPath string `json:"new_path"`
@@ -822,13 +822,9 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 					continue
 				}
 
-				authorType := "User"
-				if note.Author.Bot {
-					authorType = "Bot"
-				}
 				thread.Comments = append(thread.Comments, forge.ReviewThreadComment{
 					Author:     note.Author.Username,
-					AuthorType: authorType,
+					AuthorType: gitlabActorType(note.Author.Bot),
 					Body:       note.Body,
 					CreatedAt:  note.CreatedAt,
 				})
@@ -839,11 +835,7 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 				thread.IsResolved = true
 				if note.ResolvedBy != nil {
 					thread.ResolvedBy = note.ResolvedBy.Username
-					if note.ResolvedBy.Bot {
-						thread.ResolvedByType = "Bot"
-					} else {
-						thread.ResolvedByType = "User"
-					}
+					thread.ResolvedByType = gitlabActorType(note.ResolvedBy.Bot)
 				}
 				if note.Position != nil {
 					thread.Path = note.Position.NewPath
@@ -866,6 +858,18 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 	}
 
 	return result, nil
+}
+
+// gitlabActorType fails closed when GitLab does not identify whether an actor
+// is a bot. Callers use the User value to trust a human resolution.
+func gitlabActorType(bot *bool) string {
+	if bot == nil {
+		return "Unknown"
+	}
+	if *bot {
+		return "Bot"
+	}
+	return "User"
 }
 
 // DismissPullRequestReview dismisses a review on a merge request.

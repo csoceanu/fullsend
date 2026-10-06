@@ -214,8 +214,9 @@ fullsend
 
 `fetch-review-threads` emits a JSON object containing `threads` and a
 `truncated` flag. GitHub review threads are capped at 20 pages; consumers
-must treat `truncated: true` as an incomplete result. GitLab does not
-support this operation and returns an unsupported-operation error.
+must treat `truncated: true` as an incomplete result. GitLab merge-request
+discussions are mapped to the same thread model, including resolution state,
+comments, positions, and resolver identity when GitLab provides it.
 
 The `mint`, `inference`, and `github` subcommands decompose setup into role-specific operations for organizations that separate GCP and GitHub responsibilities:
 
