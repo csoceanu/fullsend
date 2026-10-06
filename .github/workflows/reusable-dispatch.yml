@@ -945,11 +945,22 @@ jobs:
           repos: ${{ steps.workspace.outputs.repo_name }}
           mint_url: ${{ inputs.mint_url }}
 
+      - name: Detect review CLI install mode
+        id: review-cli-mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .defaults/action.yml || -f .fullsend/.defaults/action.yml ]]; then
+            echo "mode=vendored" >> "${GITHUB_OUTPUT}"
+          else
+            echo "mode=upstream" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Install fullsend CLI for review context
         id: install-fullsend
         uses: ./.defaults/.github/actions/install-fullsend-cli
         with:
-          mode: ${{ inputs.install_mode == 'per-repo' && 'vendored' || 'upstream' }}
+          mode: ${{ steps.review-cli-mode.outputs.mode }}
           vendored_path: .fullsend/bin/fullsend
           workflow_repository: ${{ job.workflow_repository }}
           workflow_sha: ${{ job.workflow_sha }}
@@ -987,6 +998,7 @@ jobs:
             ${{ fromJSON(needs.route.outputs.event_payload).pull_request.number
              || fromJSON(needs.route.outputs.event_payload).issue.number }}
           ORG_NAME: ${{ github.repository_owner }}
+          FULLSEND_APP_SET: ${{ vars.FULLSEND_APP_SET }}
           FULLSEND_BIN: ${{ steps.install-fullsend.outputs.fullsend-path }}
           FULLSEND_DIR: ${{ inputs.install_mode == 'per-repo' && '.fullsend' || '' }}
         run: bash "${FULLSEND_DIR:+$FULLSEND_DIR/}scripts/pre-fetch-resolved-threads.sh"

@@ -93,6 +93,7 @@ run_test() {
   local graphql_response="$2"
   local expected_count="$3"
   local extra_check="${4:-}"   # optional jq expression to validate output
+  local app_set="${5:-}"       # optional FULLSEND_APP_SET identity
 
   local mock_bin
   mock_bin="$(build_mock "${graphql_response}")"
@@ -110,6 +111,7 @@ run_test() {
     ORG_NAME="test-org" \
     PR_NUM="42" \
     SOURCE_REPO="test-org/test-repo" \
+    FULLSEND_APP_SET="${app_set}" \
     GITHUB_OUTPUT="${github_output}" \
     GITHUB_WORKSPACE="${workspace}" \
     bash "${SCRIPT}" > "${TMPDIR}/stdout.log" 2>&1 || exit_code=$?
@@ -393,7 +395,49 @@ run_test "other-bot-resolved-excluded" \
   "$(make_graphql_response "${THREAD_DEPENDABOT_RESOLVED}")" \
   0
 
-# 13. Resolver's comment is used, not another human's.
+# 13. Human-only resolved threads are not review findings.
+THREAD_HUMAN_ONLY='[{
+  "id": "T_HUMAN_ONLY",
+  "isResolved": true,
+  "path": "human.go",
+  "line": 11,
+  "originalLine": 11,
+  "resolvedBy": {"login": "alice", "__typename": "User"},
+  "comments": {
+    "pageInfo": {"hasNextPage": false},
+    "nodes": [
+      {"author": {"login": "alice", "__typename": "User"}, "body": "Not a bot finding", "createdAt": "2026-09-01T10:00:00Z"}
+    ]
+  }
+}]'
+
+run_test "human-only-resolved-excluded" \
+  "$(make_graphql_response "${THREAD_HUMAN_ONLY}")" \
+  0
+
+# 14. Custom Fullsend App-set bot identities are recognized.
+THREAD_CUSTOM_APP='[{
+  "id": "T_CUSTOM_APP",
+  "isResolved": true,
+  "path": "custom.go",
+  "line": 12,
+  "originalLine": 12,
+  "resolvedBy": {"login": "alice", "__typename": "User"},
+  "comments": {
+    "pageInfo": {"hasNextPage": false},
+    "nodes": [
+      {"author": {"login": "custom-review", "__typename": "Bot"}, "body": "<!-- finding:f_custom -->", "createdAt": "2026-09-01T10:00:00Z"}
+    ]
+  }
+}]'
+
+run_test "custom-app-set-finding-id" \
+  "$(make_graphql_response "${THREAD_CUSTOM_APP}")" \
+  1 \
+  '.resolved_threads[0].finding_id == "f_custom"' \
+  "custom"
+
+# 15. Resolver's comment is used, not another human's.
 #     Bob comments but Alice resolves — human_response should be from
 #     Alice (the resolver), and if Alice didn't comment it's silent.
 THREAD_DIFFERENT_COMMENTER='[{
@@ -417,7 +461,7 @@ run_test "different-commenter-silent-resolution" \
   1 \
   '.resolved_threads[0].resolution_context == "silent_resolution" and .resolved_threads[0].human_response == null'
 
-# 14. Resolver left a comment — should be explicit_dismissal with their text.
+# 16. Resolver left a comment — should be explicit_dismissal with their text.
 THREAD_RESOLVER_COMMENTED='[{
   "id": "T_14",
   "isResolved": true,
@@ -440,7 +484,7 @@ run_test "resolver-commented-explicit-dismissal" \
   1 \
   '.resolved_threads[0].resolution_context == "explicit_dismissal" and .resolved_threads[0].human_response == "Intentional, closing."'
 
-# 15. Metadata includes truncated flag (false when under page cap).
+# 17. Metadata includes truncated flag (false when under page cap).
 run_test "metadata-truncated-false" \
   "$(make_graphql_response "${THREAD_HUMAN_RESOLVED}")" \
   1 \

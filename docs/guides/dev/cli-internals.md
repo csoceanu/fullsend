@@ -169,6 +169,12 @@ fullsend
 │   ├── --dry-run                            #   Print what would be posted without API calls
 │   ├── --keep-history                       #   Append previous content as collapsed history (default true)
 │   └── --fullsend-dir <path>                #   .fullsend config directory (default: $FULLSEND_DIR; resolves keep_history default)
+├── fetch-review-threads                      # Fetch PR/MR review threads as JSON
+│   ├── --repo <owner/repo>                   #   Repository in owner/repo format (required)
+│   ├── --pr <int>                            #   Pull request / merge request number (required)
+│   ├── --forge <forge>                       #   Forge backend: github (default) or gitlab
+│   ├── --token <string>                      #   Forge token (default: forge environment token)
+│   └── --base-url <url>                      #   Forge API base URL
 ├── post-comment                             # Post issue/PR comments to GitHub (deprecated)
 │   └── --token <string>                     #   GitHub token (default: $GH_TOKEN / $GITHUB_TOKEN / gh auth token)
 ├── eval-measure                             # Score wild-run traces (eval measurements)
@@ -205,6 +211,11 @@ fullsend
 ```
 
 ### Command Decomposition
+
+`fetch-review-threads` emits a JSON object containing `threads` and a
+`truncated` flag. GitHub review threads are capped at 20 pages; consumers
+must treat `truncated: true` as an incomplete result. GitLab does not
+support this operation and returns an unsupported-operation error.
 
 The `mint`, `inference`, and `github` subcommands decompose setup into role-specific operations for organizations that separate GCP and GitHub responsibilities:
 

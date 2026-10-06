@@ -43,6 +43,12 @@ REVIEW_BOT="${ORG_NAME}-review[bot]"
 SHARED_REVIEW_BOT="fullsend-ai-review[bot]"
 REVIEW_BOT_LOGIN="${ORG_NAME}-review"
 SHARED_REVIEW_BOT_LOGIN="fullsend-ai-review"
+APP_SET_REVIEW_BOT=""
+APP_SET_REVIEW_BOT_LOGIN=""
+if [[ -n "${FULLSEND_APP_SET:-}" ]]; then
+  APP_SET_REVIEW_BOT="${FULLSEND_APP_SET}-review[bot]"
+  APP_SET_REVIEW_BOT_LOGIN="${FULLSEND_APP_SET}-review"
+fi
 
 FULLSEND_BIN="${FULLSEND_BIN:-fullsend}"
 if ! response=$("${FULLSEND_BIN}" fetch-review-threads --repo "${SOURCE_REPO}" --pr "${PR_NUM}" 2>/dev/null); then
@@ -86,6 +92,8 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
   --arg shared_bot "${SHARED_REVIEW_BOT}" \
   --arg bot_login "${REVIEW_BOT_LOGIN}" \
   --arg shared_bot_login "${SHARED_REVIEW_BOT_LOGIN}" \
+  --arg app_set_bot "${APP_SET_REVIEW_BOT}" \
+  --arg app_set_bot_login "${APP_SET_REVIEW_BOT_LOGIN}" \
   '[.[]
     | select(.is_resolved == true)
     | select(.resolved_by != null and .resolved_by != "")
@@ -93,6 +101,11 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
     | select((.resolved_by | endswith("[bot]")) | not)
     | select((.comments // [] | length) > 0)
     | select((.comments_truncated // false) == false)
+    | select(any(.comments[];
+        .author_type == "Bot" and
+        (.author == $bot_login or .author == $shared_bot_login or
+         .author == $app_set_bot_login or .author == $bot or
+         .author == $shared_bot or .author == $app_set_bot)))
     | .resolved_by as $resolver
     | {
         file: .path,
@@ -103,7 +116,8 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
           [.comments[]
            | select(.author_type == "Bot")
            | select(.author == $bot_login or .author == $shared_bot_login or
-                    .author == $bot or .author == $shared_bot)]
+                    .author == $app_set_bot_login or .author == $bot or
+                    .author == $shared_bot or .author == $app_set_bot)]
           | first // null
           | if . then (.body | .[0:200]) else null end
         ),
@@ -111,7 +125,8 @@ RESOLVED_THREADS=$(echo "${nodes_json}" | jq -c \
           [.comments[]
            | select(.author_type == "Bot")
            | select(.author == $bot_login or .author == $shared_bot_login or
-                    .author == $bot or .author == $shared_bot)]
+                    .author == $app_set_bot_login or .author == $bot or
+                    .author == $shared_bot or .author == $app_set_bot)]
           | first // null
           | if . then (.body | capture("<!-- finding:(?<id>[a-zA-Z0-9_]+) -->") // null | .id // null) else null end
         ),
