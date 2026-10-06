@@ -69,6 +69,7 @@ import contextlib
 import hashlib
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -395,11 +396,26 @@ def log_finding(name: str, severity: str, detail: str, action: str) -> None:
         "detail": detail[:MAX_TEXT],
         "action": action,
     }
-    try:
-        with open(FINDINGS_PATH, "a") as handle:
-            handle.write(json.dumps(finding) + "\n")
-    except OSError:
-        pass
+    # The log is under the agent-writable workspace and every deny records
+    # itself before block(): a plain open() of a FIFO planted there would
+    # stall the deny until codex's timeout lets the call through, so the
+    # open is non-blocking and only a regular file is written, as in
+    # _sha256_regular_file (a FIFO fails the open with ENXIO or the S_ISREG
+    # check; either way the decision goes on to block()).
+    line = (json.dumps(finding) + "\n").encode()
+    with contextlib.suppress(OSError):
+        fd = os.open(
+            FINDINGS_PATH,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | os.O_NOFOLLOW,
+            0o644,
+        )
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                written = 0
+                while written < len(line):
+                    written += os.write(fd, line[written:])
+        finally:
+            os.close(fd)
 
 
 def block(reason: str) -> None:
@@ -443,6 +459,10 @@ def block(reason: str) -> None:
     Closing and dropping the wrapper keeps the exit code fail-closed on
     every CPython build regardless of whether the write above reached fd 2.
     """
+    # A spawn-guard deadline still armed here would fire during interpreter
+    # exit and kill the process by signal, which codex does not treat as a
+    # block; clear it before the exit below.
+    signal.setitimer(signal.ITIMER_REAL, 0)
     text = (reason or "").strip() or "fullsend hook blocked this tool call"
     truncated = text[:MAX_TEXT]
     with contextlib.suppress(BaseException):
@@ -655,6 +675,80 @@ def run_pre_tool_use(scripts: list[str], hook_input: dict[str, Any], tool_name: 
     sys.exit(0)
 
 
+def _spawn_guard_deadline_passed(signum: int, frame: object) -> None:
+    """SIGALRM: the guard's deadline passed, inside a read or not. block()
+    puts the reason on fd 2 the way every deny does; _exit then ends the
+    process here, so nothing on the way back up through the interrupted
+    read can swallow the exit."""
+    log_finding("codex_spawn_guard_block", "critical", SPAWN_GUARD_DEADLINE_REASON, "block")
+    with contextlib.suppress(SystemExit):
+        block(SPAWN_GUARD_DEADLINE_REASON)
+    os._exit(2)
+
+
+def arm_spawn_guard_deadline() -> str | None:
+    """Give the guard its own deadline below codex's handler timeout.
+
+    codex kills a handler at the hooks.json timeout and a killed handler does
+    not block (ADR 0126; hooks/src/engine/command_runner.rs records the
+    outcome "timeout" and lets the call through), so the guard must deny on
+    its own clock. Returns the deny reason when the deadline has already
+    passed, else arms SIGALRM for what is left of it and returns None.
+    Starvation that keeps the alarm from running before codex's timeout is
+    the residual the ADR names.
+    """
+    remaining = SPAWN_GUARD_DEADLINE_S - (time.monotonic() - _START)
+    if remaining <= 0:
+        return SPAWN_GUARD_DEADLINE_REASON
+    signal.signal(signal.SIGALRM, _spawn_guard_deadline_passed)
+    signal.setitimer(signal.ITIMER_REAL, remaining)
+    return None
+
+
+def verify_spawn_files(digests: dict[str, str]) -> str | None:
+    """Re-check hooks.json and every registered role file against the digests
+    the run command exported, returning a deny reason or None.
+
+    Codex reads both again when a child starts (verified on 0.157.0 and
+    0.159.0), and CODEX_HOME is agent-writable, so the launch-time shell
+    guard does not cover a child. Each digest is bound to its path, and the
+    roles directory must hold exactly the registered files: a file planted
+    there before launch is a spawnable role. Reads go through
+    _sha256_regular_file; the deadline run_spawn_guard armed covers a read
+    that still stalls (ADR 0126).
+    """
+    if "hooks.json" not in digests:
+        return (
+            "fullsend: hooks.json has no recorded digest, so the spawn cannot be "
+            "verified (fail closed)"
+        )
+    for key in sorted(digests):
+        if key != "hooks.json" and not (key.startswith("agents/") and key.endswith(".toml")):
+            return f"fullsend: {key} is not a file the spawn guard records (fail closed)"
+        try:
+            actual = _sha256_regular_file(os.path.join(ADAPTER_DIR, key))
+        except OSError as err:
+            return f"fullsend: {key} could not be read for verification (fail closed): {err}"
+        if actual != digests[key]:
+            return (
+                f"fullsend: {key} changed since the run started; refusing the spawn (fail closed)"
+            )
+    try:
+        entries = sorted(os.listdir(ROLES_DIR))
+    except FileNotFoundError:
+        # No role registered and no directory: nothing to be exhaustive about.
+        entries = []
+    except OSError as err:
+        return f"fullsend: the roles directory could not be listed (fail closed): {err}"
+    for name in entries:
+        if f"agents/{name}" not in digests:
+            return (
+                f"fullsend: {name} in the roles directory is not a role the runner "
+                "registered (fail closed)"
+            )
+    return None
+
+
 def spawn_policy(hook_input: dict[str, Any], registered: dict[str, str]) -> str | None:
     """The reason a collaboration tool call is outside the runner's policy
     (ADR 0126), or None for a V1 spawn from the root thread of a registered
@@ -706,6 +800,10 @@ def run_spawn_guard(hook_input: dict[str, Any]) -> None:
             log_finding("codex_spawn_guard_block", "critical", denied, "block")
             block(denied)
         sys.exit(0)
+    deadline = arm_spawn_guard_deadline()
+    if deadline is not None:
+        log_finding("codex_spawn_guard_block", "critical", deadline, "block")
+        block(deadline)
     registered = expected_digests(SPAWN_DIGESTS_ENV)
     if registered is None:
         reason: str | None = (
@@ -713,7 +811,7 @@ def run_spawn_guard(hook_input: dict[str, Any]) -> None:
             "registered (fail closed)"
         )
     else:
-        reason = spawn_policy(hook_input, registered)
+        reason = verify_spawn_files(registered) or spawn_policy(hook_input, registered)
     if reason is not None:
         log_finding("codex_spawn_guard_block", "critical", reason, "block")
         block(reason)
@@ -726,6 +824,7 @@ def run_spawn_guard(hook_input: dict[str, Any]) -> None:
         f"admitted spawn tool_use_id={hook_input.get('tool_use_id')} agent_type={role}",
         "allow",
     )
+    signal.setitimer(signal.ITIMER_REAL, 0)  # see block()
     sys.exit(0)
 
 

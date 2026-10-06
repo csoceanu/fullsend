@@ -77,6 +77,7 @@ test -f '/sandbox/codex-config/hooks/unicode_posttool.py' &&
 [ "$(command -p sha256sum '/sandbox/codex-config/hooks.json' | command -p cut -d' ' -f1)" = '<sha256>' ] || { echo 'fullsend: codex config.toml or hooks.json is not the file fullsend wrote; refusing to run (a rewritten config can trust the target repo, which loads its .codex/ layer and its hooks)' >&2; exit 98; }; } &&
 command -p rm -f '/sandbox/codex-config/models_cache.json' &&
 export FULLSEND_CODEX_HOOK_DIGESTS='canary_posttool.py:<sha256> canary_pretool.py:<sha256> context_suppress_posttool.py:<sha256> hook_io.py:<sha256> posttool_chain.py:<sha256> secret_redact_posttool.py:<sha256> ssrf_pretool.py:<sha256> tirith_check.py:<sha256> unicode_posttool.py:<sha256>' &&
+export FULLSEND_CODEX_SPAWN_DIGESTS='hooks.json:<sha256>' &&
 export TIRITH_REQUIRED='1' &&
 export FULLSEND_EGRESS_ALLOWLIST='api.github.com:443' &&
 printf '%s' 'Run the agent task' | "$FULLSEND_CODEX_BIN" exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust -C '/sandbox/workspace/repo' --model 'gpt-5.6-luna' -c 'model_provider=fullsend-openai' -c 'approval_policy=never' -c 'sandbox_mode=danger-full-access' -c 'model_providers.fullsend-openai.base_url="https://api.openai.com/v1"' -c 'model_providers.fullsend-openai.auth.command="/sandbox/codex-config/openai-token.sh"' -c 'model_reasoning_effort=high' -o '/sandbox/codex-config/last-message.txt' -

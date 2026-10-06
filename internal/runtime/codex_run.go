@@ -75,6 +75,19 @@ func codexHookDigestsValue(scripts map[string]string) string {
 	return strings.Join(pairs, " ")
 }
 
+// codexSpawnDigestsValue renders the spawn guard's digest map in the same
+// form: "hooks.json:<sha256>" plus "agents/<role>.toml:<sha256>" per
+// registered role, sorted by key. The key is the file's path relative to
+// CODEX_HOME, which is where the adapter resolves it from; the role name is
+// the file name without ".toml", which is what a spawn's agent_type names.
+func codexSpawnDigestsValue(d codexRunnerHeldDigestSet) string {
+	entries := map[string]string{codexHooksFile: d.HooksJSON}
+	for role, digest := range d.RoleFiles {
+		entries["agents/"+role+".toml"] = digest
+	}
+	return codexHookDigestsValue(entries)
+}
+
 // codexOpenAIProvider is the only model provider prefix codex accepts in a
 // fullsend model spec. codex speaks the OpenAI Responses API and has no
 // Vertex, Anthropic or Gemini path, so any other prefix is a configuration
@@ -384,6 +397,8 @@ func buildCodexRunCommand(params RunParams, model, effort string, hooksEnabled b
 		// and read by the adapter before every hook script it spawns.
 		parts = append(parts, "&& export "+codexHookDigestsEnv+"="+
 			shellQuote(codexHookDigestsValue(digests.HookScripts)))
+		parts = append(parts, "&& export "+codexSpawnDigestsEnv+"="+
+			shellQuote(codexSpawnDigestsValue(digests)))
 		// The hook scripts' own configuration, re-asserted from what the
 		// runner derived from the harness. appendHookEnv wrote the same values
 		// into the workspace .env at bootstrap, and that file is

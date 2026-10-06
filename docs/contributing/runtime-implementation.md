@@ -1156,7 +1156,10 @@ cannot be overridden, so it cannot follow the mid-run refresh a short-lived WIF 
 `$CODEX_HOME/hooks.json` from `security.HookPlan`, and uploads the embedded
 `fullsend-codex-hook.py` beside the scripts. Each plan group becomes one handler,
 `python3 <adapter> <phase> <script...>`, so the scripts still run in plan order inside one process —
-the ordering the PostToolUse chain depends on.
+the ordering the PostToolUse chain depends on. One more `PreToolUse` handler, element 0, is not a
+plan group: `python3 <adapter> SpawnGuard`, the spawn policy of
+[ADR 0126](../ADRs/0126-fullsend-owned-codex-subagents.md), written whenever `hooks.json` is
+written, with every sandbox hook off included.
 
 Matcher translation, per group:
 
@@ -1168,6 +1171,7 @@ Matcher translation, per group:
 | `Read`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch` | *dropped, with a note* | no codex tool; the `Bash` groups cover this work |
 | `*` (`security.AllTools`) | *matcher key omitted* | an absent matcher matches every tool |
 | `PostToolUseFailure` (any tools) | *not wired* | codex has no such event and does not need one — see below |
+| *(the spawn guard, not a plan group)* | `^(multi_agent_v1\|collaboration)\|(spawn\|resume)_agent$` (a regex: codex compiles a matcher with a character outside `[A-Za-z0-9_\|]` as one; it reaches every tool in codex's two multi-agent namespaces, which codex names as namespace and tool joined, plus the bare V1 `spawn_agent`; inside that set the handler admits the exact hook name `spawn_agent` under policy, passes `multi_agent_v1wait_agent`, `multi_agent_v1close_agent` and `multi_agent_v1send_input` through from the parent only, and denies every other name and every call from a child) | element 0 of `PreToolUse`; the adapter's `SpawnGuard` mode admits only a V1 spawn from the root thread of a registered role with `fork_context: false` and no `model` or `reasoning_effort` argument, after re-checking `hooks.json` and the role files against `FULLSEND_CODEX_SPAWN_DIGESTS`; every other case, its own errors included, is exit 2 with a reason. An admission is appended to the findings log (`codex_spawn_guard_admit`, with the spawn's `tool_use_id` and role) next to the `codex_spawn_guard_block` entries, so the run's audit trail (`<run dir>/security/findings.jsonl`) lists every spawn the guard decided. A `spawn_agent` matcher alone would run for neither the V1 resume nor the V2 spawn (verified on 0.157.0 through 0.159.3) |
 
 Tokens are joined with `|` and stay within `[A-Za-z0-9_|]`, which is the character set codex treats
 as an **exact alternation** rather than a regex, so there is no anchoring question and no substring
@@ -1229,6 +1233,7 @@ as the place its expected value comes from. There are two trustworthy places —
 | hook adapter, auth script | **compile-time** — `go:embed`ed, so the digest is a literal in the run command | SHA-256, exit 97 |
 | the shared hook scripts | **compile-time** for the bytes, **runner-held** for which names — Bootstrap records the name → digest map for the set the harness enabled | SHA-256 per filename, plus an exhaustive directory check, exit 97 |
 | `config.toml`, `hooks.json` | **runner-held** — rendered per run, so Bootstrap records what it uploaded outside the sandbox and Run injects it into the launch command (`codex_integrity.go`) | whole-file SHA-256, exit 98 |
+| `agents/<role>.toml` (role files; none written yet) | **runner-held** — Bootstrap records role name → digest in `RoleFiles`; Run exports it with `hooks.json`'s digest as `FULLSEND_CODEX_SPAWN_DIGESTS` | re-hashed by the spawn guard before every spawn, each file by name, and `agents/` must hold exactly the recorded entries; a mismatch denies the spawn, exit 2 |
 | `fullsend-manifest.json` | none — it is a file in the same agent-writable directory | information only; never authority |
 
 The hook-script check makes codex **stricter than Claude Code and pi**, where the scripts stay
@@ -1255,6 +1260,16 @@ the codex process's environment after `.env` and before launch, and a running pr
 is not something the agent can reach, so **the adapter re-reads and re-verifies each script
 immediately before spawning it** and blocks on a mismatch. A missing or malformed map is itself a
 block, since the adapter only ever runs when the runner enabled hooks.
+
+The spawn guard closes the same window for children (ADR 0126). Codex re-reads `hooks.json` and a
+role's file when a child starts, so `FULLSEND_CODEX_SPAWN_DIGESTS` — `hooks.json:<sha256>` plus one
+`agents/<role>.toml:<sha256>` per registered role, keys relative to `CODEX_HOME`, sorted — is
+exported next to the hook-script map, and the `SpawnGuard` handler re-hashes every listed file and
+lists `agents/` before it applies the policy. It does that on its own deadline, below the handler
+timeout at which codex kills a hook without blocking, and reads only a regular file under the
+adapter's size cap, so a stalled read or a path swapped for a FIFO denies the spawn. The role name
+is the file name without `.toml`; a spawn without `agent_type` asks for `default`. With no role
+registered the value is `hooks.json:<sha256>` alone and every spawn is denied.
 
 **PATH is pinned across `.env` for the same reason the interpreter is.** The hook scripts resolve
 their tools by name — `tirith_check.py` runs a bare `tirith` — so a `.env` that prepends a directory
@@ -1409,3 +1424,4 @@ Two artefacts of the run are worth knowing about:
 | `ConfigToml` keys and the `ReasoningEffort` enum | a renamed or removed key silently changes behaviour; `--strict-config` reports it | `codex-rs/config/src/config_toml.rs`, `codex-rs/protocol/src/openai_models.rs` |
 | Project trust and `AGENTS.md` | the pinned untrusted entry must still stop codex recording its own trust level, the repo's `.codex/` layer must stay unloaded, and `$CODEX_HOME/AGENTS.md` must still load while the project is untrusted, or the bridge stops reaching the agent | `codex-rs/app-server/src/request_processors/thread_processor.rs` (trust write), `codex-rs/config/src/loader/mod.rs`, `codex-rs/core/src/agents_md.rs`, `codex-rs/codex-home/src/instructions/mod.rs` |
 | JSONL event structs, rollout line types and rollout file naming | the stream parser and transcript extraction; a rollout line type missing from `codexRolloutEnvelopes` discards the whole transcript | `codex-rs/exec/src/exec_events.rs`, `codex-rs/history/src/rollout_payload.rs` (`RolloutItemWire`), `codex-rs/thread-store/src/local/helpers.rs` |
+| The multi-agent tool set and its namespaces (`multi_agent_v1`; `collaboration`, the V2 default), the hook-name rule (namespace and tool joined; the V1 spawn bare as `spawn_agent`), the hook outcomes codex honours as a block (exit 2 with non-empty stderr) and those it does not (empty stderr, other exits, `async`, and a timeout: codex kills the handler at the `hooks.json` timeout, records outcome `timeout` and lets the call through), the child payload's `agent_id` and `agent_type` (present in a child's payload, absent from the parent's), depth one with no multi-agent tool for a child (`core/src/tools/spec_plan.rs` `collab_tools_enabled`), four open children with overflow rejected, the spawn arguments (`agent_type`, `fork_context`, `items`, `message`, `model`, `reasoning_effort` at 0.157.0, unchanged through 0.159.3), and what codex rereads when a child starts (the role's file and `hooks.json`; `config.toml` is read once at launch) | the spawn guard's matcher, pass-through set, policy, digest set and deny contract are built on them: a tool matching none of the three clauses (names starting `multi_agent_v1`, names starting `collaboration`, bare names ending in `spawn_agent`/`resume_agent`) never reaches the hook, a renamed wait or close is denied (loud, not silent), a payload shape that drops `agent_id` turns the child-spawn and parent-only rules into a pass (so a bump that changes it ships with the hook updated), a new argument that names a model or an effort is not denied, a changed block contract turns every deny into a pass, and the spawn-time digest set holds `hooks.json` and the role files because codex rereads exactly those at child start (a bump that makes a child reread `config.toml` or another file adds it to the set); the guard's own deadline (`SPAWN_GUARD_DEADLINE_S`, below the timeout) and its reads through `_sha256_regular_file` rest on the timeout outcome staying a non-block | `codex-rs/core/src/tools/handlers/multi_agents_spec.rs`, `codex-rs/core/src/tools/registry.rs` (`function_hook_tool_name`), `codex-rs/core/src/tools/hook_names.rs`, `codex-rs/hooks/src/events/common.rs` and `pre_tool_use.rs` (`parse_completed`), `codex-rs/hooks/src/engine/command_runner.rs` (the timeout branch), `codex-rs/core/src/agent/role.rs` (the role file, read at spawn), `codex-rs/core/src/session/session.rs` (`hooks.json`), `codex-rs/core/src/agent/child_config.rs` (a child's config is a clone of the parent's), `internal/runtime/codex_hook/fullsend-codex-hook.py` (`_sha256_regular_file`); the `spawn_agent` declaration in the second request (`req2.json`) of a probe run |
