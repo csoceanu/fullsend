@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
+	"github.com/fullsend-ai/fullsend/internal/repos"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +43,14 @@ func TestFetchReviewThreadsCommand(t *testing.T) {
 	require.Len(t, got.Threads, 1)
 	assert.Equal(t, "thread-1", got.Threads[0].ID)
 	assert.True(t, got.Threads[0].IsResolved)
+}
+
+func TestFetchReviewThreadsCommand_DefaultsToGitHubForge(t *testing.T) {
+	cmd := newFetchReviewThreadsCmd()
+
+	flag := cmd.Flags().Lookup("forge")
+	require.NotNil(t, flag)
+	assert.Equal(t, repos.ForgeGitHub, flag.DefValue)
 }
 
 func TestFetchReviewThreadsCommand_ValidatesFlags(t *testing.T) {

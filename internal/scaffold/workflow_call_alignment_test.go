@@ -1440,6 +1440,24 @@ func TestReviewCLIInstallModeDetection(t *testing.T) {
 	}
 }
 
+// TestReviewCLIInstallersUseDistinctSourceDirs protects the review job from
+// reusing the source checkout created by the context-fetch installer. Both
+// installers can build from source for an unreleased workflow SHA, and each
+// must be able to initialize its own git repository.
+func TestReviewCLIInstallersUseDistinctSourceDirs(t *testing.T) {
+	cliAction, err := os.ReadFile(filepath.Join("..", "..", ".github/actions/install-fullsend-cli/action.yml"))
+	require.NoError(t, err)
+	rootAction, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
+	require.NoError(t, err)
+
+	assert.Contains(t, string(cliAction), `SRC="${RUNNER_TEMP}/fullsend-cli-src"`)
+	assert.Contains(t, string(rootAction), `SRC="${RUNNER_TEMP}/fullsend-agent-src"`)
+	assert.NotEqual(t,
+		"${RUNNER_TEMP}/fullsend-cli-src",
+		"${RUNNER_TEMP}/fullsend-agent-src",
+		"context and agent installers must not share a source checkout")
+}
+
 // TestRoutingLabelPrefixDrift validates that every TRIGGERING_LABEL comparison
 // in the per-org scaffold dispatch workflow satisfies the ready- prefix
 // predicate used by the workflow-call shim if: guard. If someone adds a

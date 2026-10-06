@@ -17,13 +17,17 @@
 # script writes an empty file and exits 0 so the review proceeds
 # without resolution data (current behavior preserved).
 #
-# Required environment variables (set by the review agent):
+# Required environment variables (set by the review workflow):
 #
 #   - GH_TOKEN          — token with read access to the PR
 #   - SOURCE_REPO       — owner/repo (e.g., "fullsend-ai/fullsend")
 #   - PR_NUM            — PR number
 #   - ORG_NAME          — org name for bot identity filtering
-#   - FULLSEND_BIN      — optional path to the fullsend CLI (defaults to fullsend)
+#
+# Optional environment variables:
+#
+#   - FULLSEND_BIN      — path to the fullsend CLI (defaults to fullsend)
+#   - FULLSEND_APP_SET  — custom review app-set prefix for bot identity filtering
 #
 # Outputs (via GITHUB_OUTPUT):
 #   - human_resolved_file — path to the JSON file

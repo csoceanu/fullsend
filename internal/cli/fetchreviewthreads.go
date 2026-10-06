@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fullsend-ai/fullsend/internal/repos"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +45,7 @@ func newFetchReviewThreadsCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&repo, "repo", "", "repository in owner/repo format (required)")
 	cmd.Flags().IntVar(&pr, "pr", 0, "pull request number (required)")
-	cmd.Flags().StringVar(&forgeName, "forge", "github", "forge backend (github or gitlab)")
+	cmd.Flags().StringVar(&forgeName, "forge", repos.ForgeGitHub, "forge backend (github or gitlab)")
 	cmd.Flags().StringVar(&token, "token", "", "forge token (defaults to the forge environment token)")
 	cmd.Flags().StringVar(&baseURL, "base-url", "", "forge API base URL")
 	_ = cmd.MarkFlagRequired("repo")
