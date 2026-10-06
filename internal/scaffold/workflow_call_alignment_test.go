@@ -25,10 +25,10 @@ type reusableWorkflow struct {
 	} `yaml:"on"`
 }
 
-// TestReviewWorkflowPassesHumanResolutionOutput verifies that the supported
-// per-repo review workflow exposes the output location to the agent while the
-// agent pre-script owns fetch orchestration.
-func TestReviewWorkflowPassesHumanResolutionOutput(t *testing.T) {
+// TestReviewWorkflowKeepsThreadFetchAgentOwned verifies that the supported
+// per-repo review workflow passes app identity through while the agent owns
+// thread-fetch output placement.
+func TestReviewWorkflowKeepsThreadFetchAgentOwned(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "reusable-dispatch.yml"))
 	require.NoError(t, err)
 	workflow := string(content)
@@ -40,7 +40,7 @@ func TestReviewWorkflowPassesHumanResolutionOutput(t *testing.T) {
 	}
 
 	assert.Contains(t, section, "FULLSEND_APP_SET: ${{ vars.FULLSEND_APP_SET }}")
-	assert.Contains(t, section, "HUMAN_RESOLVED_FILE: ${{ github.workspace }}/human-resolved-threads.json")
+	assert.NotContains(t, section, "HUMAN_RESOLVED_FILE:")
 	assert.NotContains(t, section, "HUMAN_RESOLVED_FETCH_SCRIPT:")
 }
 
