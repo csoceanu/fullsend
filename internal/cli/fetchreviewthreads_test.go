@@ -53,6 +53,25 @@ func TestFetchReviewThreadsCommand_DefaultsToGitHubForge(t *testing.T) {
 	assert.Equal(t, repos.ForgeGitHub, flag.DefValue)
 }
 
+func TestFetchReviewThreadsCommand_ReturnsForgeError(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"denied"}`))
+	}))
+	defer srv.Close()
+	oldTransport := http.DefaultTransport
+	http.DefaultTransport = srv.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = oldTransport })
+
+	cmd := newFetchReviewThreadsCmd()
+	cmd.SetArgs([]string{"--repo", "owner/repo", "--pr", "42", "--token", "test-token", "--base-url", srv.URL})
+	cmd.SetContext(context.Background())
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list pull request review threads page 1")
+}
+
 func TestFetchReviewThreadsCommand_ValidatesFlags(t *testing.T) {
 	tests := []struct {
 		name string

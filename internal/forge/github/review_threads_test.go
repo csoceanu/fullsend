@@ -72,6 +72,18 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	assert.Empty(t, got.Threads[1].ResolvedBy)
 }
 
+func TestListPullRequestReviewThreads_GHESGraphQLEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/graphql", r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]}}}}}`))
+	}))
+	defer srv.Close()
+
+	client := New("test-token").WithBaseURL(srv.URL + "/api/v3").WithAfterFunc(noWaitAfter)
+	_, err := client.ListPullRequestReviewThreads(context.Background(), "owner", "repo", 1)
+	require.NoError(t, err)
+}
+
 func TestListPullRequestReviewThreads_PaginatesAndCaps(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

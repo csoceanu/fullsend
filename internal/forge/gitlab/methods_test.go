@@ -83,6 +83,8 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 10, "username": "botuser", "bot": true})
 		case "20":
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 20, "username": "reviewer", "bot": false})
+		case "40":
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": 40, "username": "unknown", "bot": nil})
 		default:
 			writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "404 User Not Found"})
 		}
@@ -119,12 +121,23 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 					},
 				},
 			},
+			{
+				"id": "discussion-4",
+				"notes": []map[string]any{
+					{"id": 10, "body": "system note", "system": true, "author": map[string]any{"id": 10, "username": "botuser"}},
+					{
+						"id": 11, "body": "resolved with unknown actors", "resolvable": true, "resolved": true,
+						"resolved_by": map[string]any{"id": 40, "username": "unknown-resolver"},
+						"position":    map[string]any{"new_path": "", "old_path": "renamed.go", "old_line": 7},
+					},
+				},
+			},
 		})
 	})
 
 	got, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
 	require.NoError(t, err)
-	require.Len(t, got.Threads, 3)
+	require.Len(t, got.Threads, 4)
 	assert.Equal(t, "discussion-1", got.Threads[0].ID)
 	assert.True(t, got.Threads[0].IsResolved)
 	assert.Equal(t, "reviewer", got.Threads[0].ResolvedBy)
@@ -138,9 +151,47 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	assert.Equal(t, 3, *got.Threads[1].Line)
 	assert.True(t, got.Threads[2].IsResolved)
 	assert.Equal(t, "Unknown", got.Threads[2].ResolvedByType)
+	assert.True(t, got.Threads[3].IsResolved)
+	assert.Equal(t, "renamed.go", got.Threads[3].Path)
+	require.Len(t, got.Threads[3].Comments, 1, "system notes must not be returned")
+	assert.Equal(t, "Unknown", got.Threads[3].Comments[0].AuthorType)
+	assert.Equal(t, "Unknown", got.Threads[3].ResolvedByType)
 	assert.Equal(t, 1, actorRequests["10"])
 	assert.Equal(t, 1, actorRequests["20"], "the actor lookup should be cached per request")
 	assert.Equal(t, 1, actorRequests["30"])
+	assert.Equal(t, 1, actorRequests["40"])
+}
+
+func TestListPullRequestReviewThreads_DecodeError(t *testing.T) {
+	client, mux := setupTest(t)
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/42/discussions", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{"))
+	})
+
+	_, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode discussions")
+}
+
+func TestListPullRequestReviewThreads_PaginatesAndCaps(t *testing.T) {
+	client, mux := setupTest(t)
+	var pages int
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/42/discussions", func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		assert.Equal(t, strconv.Itoa(pages), r.URL.Query().Get("page"))
+		discussions := make([]map[string]any, 100)
+		for i := range discussions {
+			discussions[i] = map[string]any{"id": fmt.Sprintf("discussion-%d-%d", pages, i), "notes": []any{}}
+		}
+		writeJSON(t, w, http.StatusOK, discussions)
+	})
+
+	got, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
+	require.NoError(t, err)
+	assert.Equal(t, 20, pages)
+	assert.True(t, got.Truncated)
+	assert.Len(t, got.Threads, 2000)
 }
 
 func TestCreateIssue_NoLabels(t *testing.T) {
