@@ -818,13 +818,15 @@ def run_spawn_guard(hook_input: dict[str, Any]) -> None:
     # spawn_policy returned None, so tool_input is an object and its
     # agent_type, when present, a registered role.
     role = hook_input["tool_input"].get("agent_type", SPAWN_DEFAULT_ROLE)
+    # Disarm first (see block()): an alarm firing after the record below is
+    # written would deny a spawn the log already calls admitted.
+    signal.setitimer(signal.ITIMER_REAL, 0)
     log_finding(
         SPAWN_ADMIT_FINDING,
         "info",
         f"admitted spawn tool_use_id={hook_input.get('tool_use_id')} agent_type={role}",
         "allow",
     )
-    signal.setitimer(signal.ITIMER_REAL, 0)  # see block()
     sys.exit(0)
 
 
