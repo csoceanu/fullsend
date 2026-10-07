@@ -326,6 +326,8 @@ Secrets and variables are deployed on the target repository.
 - `FULLSEND_GCP_WIF_PROVIDER`
 - `FULLSEND_OPENAI_API_KEY` — static OpenAI API key for repos whose `inference.auth` is `openai-api-key` (written by `repos install --openai-api-key`; not set by `github setup`)
 
+Repos whose `inference.auth` is `openai-wif` need no Fullsend-managed inference secret: they authenticate with the user-managed `FULLSEND_OPENAI_*` identifier variables or `inference.openai` configuration, and the GCP secrets above are written only when Vertex sub-agents are configured.
+
 **Target repo variables:**
 - `FULLSEND_MINT_URL`
 - `FULLSEND_GCP_REGION` (value drift is detected and repaired by convergence)
