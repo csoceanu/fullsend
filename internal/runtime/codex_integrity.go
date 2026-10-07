@@ -67,10 +67,8 @@ type codexRunnerHeldDigestSet struct {
 	HookScripts map[string]string
 
 	// RoleFiles maps each registered sub-agent role name to the digest of
-	// its role file, agents/<name>.toml under CODEX_HOME. Nil or empty until
-	// a Bootstrap registers roles; until then every spawn is denied, because
-	// the spawn guard admits only a registered role. Run exports it with the
-	// hooks.json digest as FULLSEND_CODEX_SPAWN_DIGESTS (ADR 0126).
+	// its role file, agents/<name>.toml under CODEX_HOME. Empty until a
+	// Bootstrap registers roles; the spawn guard admits only these.
 	RoleFiles map[string]string
 }
 

@@ -755,9 +755,8 @@ func TestCodexSecurityEnv_BeatsTheAgentsEnvFile(t *testing.T) {
 		"the runner's value must survive an agent-written .env")
 }
 
-// TestBuildCodexRunCommand_ExportsSpawnDigests: the spawn guard's digest map
-// reaches codex the way the hook-script map does, after .env and before
-// launch, and only when hooks are on, since the guard is a hook.
+// TestBuildCodexRunCommand_ExportsSpawnDigests: the spawn digests are
+// exported after .env, before launch, and only when hooks are on.
 func TestBuildCodexRunCommand_ExportsSpawnDigests(t *testing.T) {
 	t.Parallel()
 

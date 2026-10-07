@@ -18,14 +18,11 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the golden files in testdata/codex/golden")
 
-// codexGoldenSHA matches a hex SHA-256. A launch command carries the digests
-// of the embedded adapter, the auth script and every hook script, which
-// change whenever those files change; the goldens pin the command's shape,
-// not those values, so each digest is stored as a placeholder.
+// codexGoldenSHA matches a hex SHA-256. The goldens pin the launch command's
+// shape, not its digests, so each one is stored as a placeholder.
 var codexGoldenSHA = regexp.MustCompile(`[0-9a-f]{64}`)
 
-// hooksOn is the RunParams of a run with hooks enabled, at file scope so a
-// later golden test renders its launch command from the same inputs.
+// hooksOn is the RunParams of a run with hooks enabled.
 var hooksOn = RunParams{RepoDir: sandbox.SandboxWorkspace + "/repo", HooksSettingsPath: CodexRuntime{}.codexHooksPath()}
 
 // codexGoldenLaunch stores a launch command one ` && ` fragment per line, so
@@ -35,8 +32,7 @@ func codexGoldenLaunch(cmd string) string {
 }
 
 // codexAllHooksOff is harness security enabled with every sandbox hook
-// disabled: Bootstrap still takes the SandboxHooksBootstrap path and writes
-// hooks.json, with no hook-script group in it.
+// disabled: hooks.json is still written, with no hook-script group in it.
 func codexAllHooksOff() security.SandboxHookConfig {
 	off := false
 	return security.SandboxHookConfigFromHarness(&harness.Harness{
@@ -55,11 +51,7 @@ func codexAllHooksOff() security.SandboxHookConfig {
 }
 
 // TestCodexGolden pins the bytes of config.toml, hooks.json and the launch
-// command that CodexRuntime renders for one agent. A change to the template,
-// the hook wiring or the run command shows up as a reviewable diff of these
-// files rather than passing through a substring assertion. The inputs are
-// the fixtures the unit tests already use: codexTestAgentDef (no Agent tool)
-// and testRunnerHeldDigests.
+// command CodexRuntime renders for one agent, so a change shows as a diff.
 //
 // Regenerate with: go test ./internal/runtime/ -run TestCodexGolden -update
 func TestCodexGolden(t *testing.T) {
@@ -68,9 +60,7 @@ func TestCodexGolden(t *testing.T) {
 	def, err := parsePiAgent([]byte(codexTestAgentDef))
 	require.NoError(t, err)
 	repo := sandbox.SandboxWorkspace + "/repo"
-	// What Bootstrap records with security disabled: no hooks.json digest,
-	// no hook scripts, no security env (codex_bootstrap.go, the
-	// SandboxHooksBootstrap branch is skipped).
+	// What Bootstrap records with security disabled.
 	noHooks := testRunnerHeldDigests
 	noHooks.HooksJSON = ""
 	noHooks.HookScripts = nil

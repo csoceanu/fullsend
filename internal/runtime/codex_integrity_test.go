@@ -97,10 +97,8 @@ func TestCodexHookScriptsGuard_IsStable(t *testing.T) {
 	}
 }
 
-// TestCodexSpawnDigestsValue pins the grammar the spawn guard reads and a
-// later change fills: "hooks.json:<sha>" plus "agents/<role>.toml:<sha>" per
-// registered role, keys relative to CODEX_HOME, sorted, so the launch
-// command is stable across iterations.
+// TestCodexSpawnDigestsValue pins the grammar the spawn guard reads:
+// "hooks.json:<sha>" plus "agents/<role>.toml:<sha>" per role, sorted.
 func TestCodexSpawnDigestsValue(t *testing.T) {
 	t.Parallel()
 

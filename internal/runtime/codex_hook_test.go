@@ -1195,10 +1195,8 @@ func TestCodexAdapter_RefusesNonRegularHookFiles(t *testing.T) {
 	}
 }
 
-// TestCodexAdapterSpawnGuardConstantsMatchGo keeps the adapter's mode token,
-// its digest variable and the one tool it admits equal to what codexHooksJSON
-// and buildCodexRunCommand write (the pattern of
-// TestCodexAdapterPhasesMatchHookPlan).
+// TestCodexAdapterSpawnGuardConstantsMatchGo keeps the adapter's spawn-guard
+// constants equal to what the Go side writes.
 func TestCodexAdapterSpawnGuardConstantsMatchGo(t *testing.T) {
 	t.Parallel()
 
@@ -1224,9 +1222,8 @@ func TestCodexAdapterSpawnGuardConstantsMatchGo(t *testing.T) {
 		"resume stays unmapped so the tool allowlist still blocks it when the dispatch hook cannot run (ADR 0126)")
 }
 
-// codexSpawnInput is the PreToolUse payload codex sends the root thread for
-// a V1 spawn of role, as captured on 0.157.0: no agent_id or agent_type at
-// the top level, the spawn's arguments under tool_input, fork_context stated.
+// codexSpawnInput is the PreToolUse payload codex sends for a V1 spawn of
+// role from the root thread: no top-level agent_id or agent_type.
 func codexSpawnInput(role string) map[string]any {
 	return map[string]any{
 		"session_id":      "01a0eea5-cf24-7250-ae7b-df1cd9b70160",
@@ -1245,11 +1242,8 @@ func codexSpawnInput(role string) map[string]any {
 	}
 }
 
-// codexChildSpawnInput is the same call made from inside a child, as
-// captured on 0.157.0 with max_depth = 2: the payload gains agent_id (the
-// child's thread) and agent_type (its role).
-// Under the runner's max_depth = 1 a child has no spawn tool, so this is
-// the only way the rule is exercised.
+// codexChildSpawnInput is the same call from inside a child: the payload
+// gains agent_id (the child's thread) and agent_type (its role).
 func codexChildSpawnInput() map[string]any {
 	in := codexSpawnInput("correctness")
 	in["agent_id"] = "01a0ee89-1b2e-7c60-8812-87a59542808f"
@@ -1268,12 +1262,10 @@ func codexSpawnArgs(in map[string]any) map[string]any {
 const codexSpawnHooksJSON = "{\"hooks\": {}}\n"
 
 // codexSpawnGuardDeadlineReason is the adapter's SPAWN_GUARD_DEADLINE_REASON,
-// the one reason both deadline paths write: block() when the deadline has
-// already passed, the SIGALRM handler when it passes during a read.
+// written by both of its deadline paths.
 const codexSpawnGuardDeadlineReason = "fullsend: the spawn guard did not finish verifying the run's files inside its deadline; refusing the spawn (fail closed)"
 
-// write puts a file under the config directory, as Bootstrap does, and
-// returns its digest.
+// write puts a file under the config directory and returns its digest.
 func (h *codexAdapterHarness) write(rel, content string) string {
 	h.t.Helper()
 	path := filepath.Join(h.dir, rel)
@@ -1282,10 +1274,8 @@ func (h *codexAdapterHarness) write(rel, content string) string {
 	return codexAssetSHA256([]byte(content))
 }
 
-// spawnDigests lays out hooks.json and one role file per name under agents/
-// and renders FULLSEND_CODEX_SPAWN_DIGESTS for them the way the run command
-// exports it: "<path>:<sha256>" pairs, paths relative to the adapter's
-// directory, sorted. The keys are the guard's role registry.
+// spawnDigests writes hooks.json and one role file per name under agents/ and
+// returns their spawn digest value. The keys are the guard's role registry.
 func (h *codexAdapterHarness) spawnDigests(roles ...string) string {
 	h.t.Helper()
 	set := map[string]string{codexHooksFile: h.write(codexHooksFile, codexSpawnHooksJSON)}
@@ -1295,8 +1285,7 @@ func (h *codexAdapterHarness) spawnDigests(roles ...string) string {
 	return codexHookDigestsValue(set)
 }
 
-// spawnEnv is the environment the run command gives codex when hooks are
-// on: the hook-script digests plus the spawn digest value.
+// spawnEnv is the environment codex gives a hook: both digest variables.
 func (h *codexAdapterHarness) spawnEnv(digests string) []string {
 	return append(os.Environ(),
 		codexHookDigestsEnv+"="+codexHookDigestsValue(h.digests),
@@ -1304,9 +1293,7 @@ func (h *codexAdapterHarness) spawnEnv(digests string) []string {
 }
 
 // spawnGuardRaw runs the adapter's SpawnGuard mode with a raw stdin and an
-// explicit environment, for the cases run cannot express. A stalled adapter
-// is killed after 20 s, so a regression fails its row instead of hanging the
-// package.
+// explicit environment. A stalled adapter is killed after 20 s.
 func (h *codexAdapterHarness) spawnGuardRaw(stdin string, env []string) codexAdapterResult {
 	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -1328,8 +1315,7 @@ func (h *codexAdapterHarness) spawnGuardRaw(stdin string, env []string) codexAda
 	return codexAdapterResult{exitCode: exitCode, stdout: stdout.String(), stderr: stderr.String()}
 }
 
-// spawnGuardWith runs the SpawnGuard mode with an explicit spawn digest
-// value, for the malformed and mismatched cases.
+// spawnGuardWith runs the SpawnGuard mode with an explicit spawn digest value.
 func (h *codexAdapterHarness) spawnGuardWith(input map[string]any, digests string) codexAdapterResult {
 	h.t.Helper()
 	payload, err := json.Marshal(input)
@@ -1343,10 +1329,8 @@ func (h *codexAdapterHarness) spawnGuard(input map[string]any, roles ...string) 
 	return h.spawnGuardWith(input, h.spawnDigests(roles...))
 }
 
-// findingsLog redirects the harness's adapter copy to a findings log under
-// the harness directory and returns its path: FINDINGS_PATH is the sandbox
-// path, fixed in the adapter, and the host test cannot write there (the
-// pattern of the rows that patch the adapter's clock).
+// findingsLog points the harness's adapter copy at a findings log under the
+// harness directory, since the host cannot write to the sandbox path.
 func (h *codexAdapterHarness) findingsLog() string {
 	h.t.Helper()
 	path := filepath.Join(h.dir, "findings.jsonl")
@@ -1359,16 +1343,10 @@ func (h *codexAdapterHarness) findingsLog() string {
 	return path
 }
 
-// TestCodexAdapter_SpawnGuardAdmits is what the guard lets through: a V1
-// spawn from the root thread of a registered role with fork_context false and
-// no model or effort argument, and the three V1 tools that act on a child
-// already admitted (wait, close, send_input), which pass through from the
-// parent before the registry is read. An allow writes nothing, since any stdout codex cannot
-// parse makes the hook Failed. An admitted spawn is recorded in the findings
-// log (codex_spawn_guard_admit, with the spawn's tool_use_id and role): the
-// record the runner compares with the completed spawns of the exec stream
-// after the run. A pass-through records nothing: it acts on a child
-// already admitted.
+// TestCodexAdapter_SpawnGuardAdmits covers what the guard lets through: a
+// root-thread V1 spawn of a registered role, and the V1 tools that act on a
+// child already admitted. An allow writes nothing, since stdout codex cannot
+// parse fails the hook; an admitted spawn is recorded in the findings log.
 func TestCodexAdapter_SpawnGuardAdmits(t *testing.T) {
 	unnamed := codexSpawnInput("")
 	delete(codexSpawnArgs(unnamed), "agent_type")
@@ -1418,12 +1396,10 @@ func TestCodexAdapter_SpawnGuardAdmits(t *testing.T) {
 	}
 }
 
-// TestCodexAdapter_SpawnGuardDenies lists every rule of the spawn guard and
-// every error branch, one row each, so a missing rule is visible. Each row
-// must end in exit 2 with a non-empty reason on stderr and nothing on
-// stdout: the only shape codex treats as a block. Exit 2 with empty stderr,
-// exit 1 and a timeout all let the spawn through (verified on 0.157.0 and
-// 0.159.0).
+// TestCodexAdapter_SpawnGuardDenies has one row per guard rule and error
+// branch. Each must end in exit 2 with a non-empty stderr and empty stdout:
+// codex blocks only on that shape; exit 1, empty stderr and a timeout all
+// let the spawn through.
 func TestCodexAdapter_SpawnGuardDenies(t *testing.T) {
 	withArgs := func(edit func(args map[string]any)) map[string]any {
 		in := codexSpawnInput("correctness")
@@ -1548,10 +1524,8 @@ func TestCodexAdapter_SpawnGuardDenies(t *testing.T) {
 			return h.spawnGuardWith(codexSpawnInput("default"), digests)
 		}, "the roles directory could not be listed"},
 		{"deadline already passed before the first read", func(t *testing.T, h *codexAdapterHarness) codexAdapterResult {
-			// The pattern of TestCodexAdapter_PostToolUseWithholdsWhenTheBudgetIsSpent:
-			// move the adapter's clock past SPAWN_GUARD_DEADLINE_S, then the guard
-			// must deny before it reads anything rather than start a read codex
-			// would kill at its own timeout (a killed handler does not block).
+			// Move the adapter's clock past its deadline: the guard must deny
+			// before reading anything, since a handler codex kills does not block.
 			src, err := os.ReadFile(h.adapter)
 			require.NoError(t, err)
 			patched := strings.Replace(string(src), "_START = time.monotonic()",
@@ -1563,7 +1537,6 @@ func TestCodexAdapter_SpawnGuardDenies(t *testing.T) {
 			return got
 		}, codexSpawnGuardDeadlineReason},
 		{"no role registered and no agents directory (main after this PR)", func(t *testing.T, h *codexAdapterHarness) codexAdapterResult {
-			// spawnDigests() writes hooks.json only: no agents/ exists, as on main until role files are generated.
 			return h.spawnGuard(codexSpawnInput("correctness"))
 		}, "'correctness' is not one the runner registered"},
 		{"empty stdin", func(t *testing.T, h *codexAdapterHarness) codexAdapterResult {
@@ -1581,9 +1554,8 @@ func TestCodexAdapter_SpawnGuardDenies(t *testing.T) {
 			return h.spawnGuard(in, "correctness")
 		}, "is not the V1 spawn tool"},
 		{"role file swapped for a FIFO", func(t *testing.T, h *codexAdapterHarness) codexAdapterResult {
-			// _sha256_regular_file opens O_NONBLOCK and checks S_ISREG on the
-			// descriptor, so the FIFO is refused at once; a plain open() would
-			// block until codex's timeout, which does not block the spawn.
+			// A plain open() of a FIFO would block until codex's timeout, which
+			// does not block the spawn; the guard must refuse it at once.
 			digests := h.spawnDigests("correctness")
 			path := filepath.Join(h.dir, "agents", "correctness.toml")
 			require.NoError(t, os.Remove(path))
@@ -1594,9 +1566,8 @@ func TestCodexAdapter_SpawnGuardDenies(t *testing.T) {
 			return got
 		}, "agents/correctness.toml could not be read for verification"},
 		{"deadline fires during a stalled read", func(t *testing.T, h *codexAdapterHarness) codexAdapterResult {
-			// A read that stalls (a starved disk, a file that grows under the cap)
-			// must still end in a deny before codex's 30 s: shorten the deadline
-			// and stall the first hash inside the adapter itself.
+			// Shorten the deadline and stall the first hash: a stalled read must
+			// still end in a deny before codex's timeout.
 			src, err := os.ReadFile(h.adapter)
 			require.NoError(t, err)
 			patched := strings.Replace(string(src),
@@ -1622,11 +1593,8 @@ func TestCodexAdapter_SpawnGuardDenies(t *testing.T) {
 			return h.spawnGuard(in, "correctness")
 		}, "is not allowed from a child"},
 		{"findings log swapped for a FIFO", func(t *testing.T, h *codexAdapterHarness) codexAdapterResult {
-			// Every deny, the deadline handler included, records itself before
-			// block(), and the findings log is under the agent-writable
-			// workspace: log_finding must refuse a FIFO planted there the way
-			// _sha256_regular_file does, instead of stalling in open() until
-			// codex's timeout lets the spawn through.
+			// Every deny logs a finding before it blocks, and the log is under the
+			// agent-writable workspace: a planted FIFO must be refused, not opened.
 			require.NoError(t, syscall.Mkfifo(h.findingsLog(), 0o600))
 			start := time.Now()
 			got := h.spawnGuard(codexSpawnInput("planted"), "correctness")

@@ -309,15 +309,11 @@ func TestCodexHooksJSON_ParsesAsCodexHooksFile(t *testing.T) {
 	}
 }
 
-// TestCodexHooksJSON_AllHooksOffKeepsSpawnGuard models "harness security on,
-// every sandbox hook off". hooks.json is still written then, and it must
-// still carry the spawn guard as its first PreToolUse group: a run with no
-// Tirith and no canary is not a run in which codex may start children outside
-// the runner's policy (ADR 0126). Security disabled is a different case, in
-// which Bootstrap writes no hooks.json at all, and is pinned by the
-// launch-nohooks.txt golden and TestBuildCodexRunCommand_HooksDisabled.
+// TestCodexHooksJSON_AllHooksOffKeepsSpawnGuard: with harness security on and
+// every sandbox hook off, hooks.json is still written and still carries the
+// spawn guard as its first PreToolUse group.
 func TestCodexHooksJSON_AllHooksOffKeepsSpawnGuard(t *testing.T) {
-	cfg := codexAllHooksOff() // the golden test's fixture (codex_golden_test.go)
+	cfg := codexAllHooksOff()
 	data, _, err := codexHooksJSON(sandbox.SandboxCodexConfig, testCodexPython, cfg)
 	require.NoError(t, err)
 
@@ -372,9 +368,8 @@ func TestRenderCodexConfig_RequiresRepoDir(t *testing.T) {
 	require.Error(t, err, "an empty path would leave the project's trust unset")
 }
 
-// TestCodexHooksJSON_SpawnGuardIsFirst pins the guard as element 0 of
-// PreToolUse, once, and that its matcher reaches every multi-agent name and
-// no shell or patch tool; codexSpawnGuardMatcher states the name rule.
+// TestCodexHooksJSON_SpawnGuardIsFirst pins the guard as the one and first
+// PreToolUse group, and its matcher's reach.
 func TestCodexHooksJSON_SpawnGuardIsFirst(t *testing.T) {
 	cfg := security.SandboxHookConfigFromHarness(&harness.Harness{})
 	data, _, err := codexHooksJSON(sandbox.SandboxCodexConfig, testCodexPython, cfg)
@@ -402,9 +397,9 @@ func TestCodexHooksJSON_SpawnGuardIsFirst(t *testing.T) {
 	// An invalid regex matches nothing, which would let every spawn through.
 	pattern := regexp.MustCompile(codexSpawnGuardMatcher)
 	for _, name := range []string{
-		"spawn_agent", "multi_agent_v1resume_agent", "collaborationspawn_agent", // the three of 0.157.0, unchanged through 0.159.3
+		"spawn_agent", "multi_agent_v1resume_agent", "collaborationspawn_agent", // codex's spawn and resume tools
 		"multi_agent_v1wait_agent", "multi_agent_v1close_agent", "multi_agent_v1send_input", // passed through by the handler
-		"collaborationwait_agent", "multi_agent_v1fork_agent", "resume_agent", // unknown or future names: reach the handler, denied there
+		"collaborationwait_agent", "multi_agent_v1fork_agent", "resume_agent", // unknown names: denied by the handler
 	} {
 		assert.True(t, pattern.MatchString(name), "the guard must run for %s", name)
 	}

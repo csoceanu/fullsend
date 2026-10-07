@@ -52,12 +52,10 @@ const codexPathVar = "FULLSEND_CODEX_PATH"
 // closing the intra-iteration window that Claude Code and pi leave open.
 const codexHookDigestsEnv = "FULLSEND_CODEX_HOOK_DIGESTS"
 
-// codexSpawnDigestsEnv carries what the spawn guard re-checks before it
-// admits a child, as "<path>:<sha256>" pairs relative to CODEX_HOME, space
-// separated: hooks.json and every registered role file, both of which codex
-// reads again when a child starts. Its keys are also the guard's role
-// registry. Exported at the same point as codexHookDigestsEnv, for the same
-// reason (ADR 0126).
+// codexSpawnDigestsEnv carries the files the spawn guard re-checks before it
+// admits a child, as space-separated "<path>:<sha256>" pairs relative to
+// CODEX_HOME: hooks.json and every registered role file, which codex re-reads
+// when a child starts. Its keys are also the guard's role registry.
 const codexSpawnDigestsEnv = "FULLSEND_CODEX_SPAWN_DIGESTS"
 
 // codexHookDigestsValue renders the map for the environment. Sorted so the
@@ -75,11 +73,9 @@ func codexHookDigestsValue(scripts map[string]string) string {
 	return strings.Join(pairs, " ")
 }
 
-// codexSpawnDigestsValue renders the spawn guard's digest map in the same
-// form: "hooks.json:<sha256>" plus "agents/<role>.toml:<sha256>" per
-// registered role, sorted by key. The key is the file's path relative to
-// CODEX_HOME, which is where the adapter resolves it from; the role name is
-// the file name without ".toml", which is what a spawn's agent_type names.
+// codexSpawnDigestsValue renders the spawn guard's digest map: hooks.json
+// plus agents/<role>.toml per registered role, keyed by path relative to
+// CODEX_HOME, which is where the adapter resolves the file from.
 func codexSpawnDigestsValue(d codexRunnerHeldDigestSet) string {
 	entries := map[string]string{codexHooksFile: d.HooksJSON}
 	for role, digest := range d.RoleFiles {
