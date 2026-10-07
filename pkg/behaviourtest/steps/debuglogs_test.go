@@ -631,6 +631,52 @@ func TestCollectFailureLogs_RedactsOpaqueCredentialLiterals(t *testing.T) {
 	}))
 }
 
+// TestCollectFailureLogs_RedactsShortSensitiveValues checks that a sensitive
+// value the shared redactor declines as too short (under 8 bytes) is still
+// masked in the summary, console diagnostics, directory names and saved logs.
+func TestCollectFailureLogs_RedactsShortSensitiveValues(t *testing.T) {
+	artifactDir := t.TempDir()
+	t.Setenv("BEHAVIOUR_ARTIFACT_DIR", artifactDir)
+
+	token := "tK9#zq"
+	envSecret := "s3cr3t"
+	t.Setenv("SOME_RUNNER_API_TOKEN", envSecret)
+
+	fake := &fakeListerCI{
+		runs: []forge.WorkflowRun{{ID: 9, Name: "Deploy " + token}},
+		logs: map[int]string{9: "using " + token + " and " + envSecret},
+	}
+	var logged []string
+	w := &world.World{
+		Org: "org", RepoName: "repo", CI: fake, Token: token,
+		ScenarioName: "scenario " + envSecret,
+		Logf:         func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) },
+	}
+
+	CollectFailureLogs(context.Background(), w, fmt.Errorf("auth failed for %s", token))
+
+	assertNoLiteral := func(where, s string) {
+		assert.NotContains(t, s, token, where)
+		assert.NotContains(t, s, envSecret, where)
+	}
+	assertNoLiteral("summary", readFailureSummary(t, artifactDir))
+	for _, line := range logged {
+		assertNoLiteral("console log", line)
+	}
+	require.NoError(t, filepath.WalkDir(artifactDir, func(path string, d os.DirEntry, err error) error {
+		require.NoError(t, err)
+		rel, relErr := filepath.Rel(artifactDir, path)
+		require.NoError(t, relErr)
+		assertNoLiteral("path "+rel, rel)
+		if !d.IsDir() {
+			data, readErr := os.ReadFile(path)
+			require.NoError(t, readErr)
+			assertNoLiteral("content of "+rel, string(data))
+		}
+		return nil
+	}))
+}
+
 func TestCollectFailureLogs_SameScenarioNameDoesNotOverwrite(t *testing.T) {
 	artifactDir := t.TempDir()
 	t.Setenv("BEHAVIOUR_ARTIFACT_DIR", artifactDir)

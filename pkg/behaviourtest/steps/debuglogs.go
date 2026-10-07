@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -210,8 +211,8 @@ var sensitiveEnvNames = []string{
 // explicitly listed infrastructure identifiers — with the process-wide
 // secret redactor. Prefix and structural patterns
 // cannot recognise an opaque credential, which would otherwise survive in
-// summaries, diagnostics and name-derived directory names. The redactor
-// ignores values that are too short to be safely masked.
+// summaries, diagnostics and name-derived directory names. Values the shared
+// redactor declines as too short are masked locally by redactText.
 func registerRedactionLiterals(w *world.World) {
 	if w != nil && w.Token != "" {
 		registerSecretForms(w.Token)
@@ -240,18 +241,50 @@ func registerRedactionLiterals(w *world.World) {
 // changes how quotes, backslashes and control characters are written, so the
 // exact literal no longer matches; the escaped spellings are registered too.
 func registerSecretForms(value string) {
-	security.RegisterRuntimeSecret(value)
+	registerSecretLiteral(value)
 	quoted := strconv.Quote(value)
-	security.RegisterRuntimeSecret(quoted[1 : len(quoted)-1])
+	registerSecretLiteral(quoted[1 : len(quoted)-1])
 	if encoded, err := json.Marshal(value); err == nil && len(encoded) >= 2 {
-		security.RegisterRuntimeSecret(string(encoded[1 : len(encoded)-1]))
+		registerSecretLiteral(string(encoded[1 : len(encoded)-1]))
+	}
+}
+
+// minLocalSecretLen is the shortest sensitive literal masked locally. The
+// shared redactor refuses values under 8 bytes because masking them can
+// mangle ordinary text; for a value known to be sensitive, failing open is
+// worse, so redactText masks values of at least this length itself. Shorter
+// values would erase single characters or common fragments across every
+// artifact, so they cannot be masked without destroying the diagnostics.
+const minLocalSecretLen = 4
+
+var (
+	shortSecretsMu sync.RWMutex
+	shortSecrets   []string
+)
+
+// registerSecretLiteral registers value with the shared redactor and, when the
+// redactor declines it as too short, records it for local masking so a short
+// sensitive value is not silently left unredacted.
+func registerSecretLiteral(value string) {
+	if security.RegisterRuntimeSecret(value) || len(value) < minLocalSecretLen {
+		return
+	}
+	shortSecretsMu.Lock()
+	defer shortSecretsMu.Unlock()
+	if !slices.Contains(shortSecrets, value) {
+		shortSecrets = append(shortSecrets, value)
 	}
 }
 
 // redactText passes s through the secret redactor.
 func redactText(s string) string {
 	if res := security.NewSecretRedactor().Scan(s); res.Sanitized != "" {
-		return res.Sanitized
+		s = res.Sanitized
+	}
+	shortSecretsMu.RLock()
+	defer shortSecretsMu.RUnlock()
+	for _, secret := range shortSecrets {
+		s = strings.ReplaceAll(s, secret, "***")
 	}
 	return s
 }
