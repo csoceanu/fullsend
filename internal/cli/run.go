@@ -3630,6 +3630,9 @@ func sensitiveEnvKey(key string) bool {
 	case "PUSH_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "GITHUB_TOKEN", "FULLSEND_FETCH_TOKEN":
 		return true
 	}
+	if isInheritedScriptDenyKey(key) {
+		return true
+	}
 	for _, suffix := range []string{"_TOKEN", "_SECRET", "_PASSWORD", "_KEY", "_CREDENTIALS"} {
 		if strings.HasSuffix(key, suffix) {
 			return true
