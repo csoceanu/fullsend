@@ -1644,12 +1644,8 @@ exit 0
 		"ImportProfile must pass --file flag to openshell provider profile import")
 }
 
-// alreadyExistsThenExportStub builds an openshell stub that fails `provider
-// profile import` with "already exists" and answers `provider profile
-// export <id>` with exportYAML on stdout. Delete is a silent no-op (exit 0),
-// matching the "a parallel process already deleted/reimported" shape as well
-// as the "delete was blocked, gateway still has old content" shape — the
-// test supplies exportYAML to pick which one it is verifying.
+// alreadyExistsThenExportStub builds an openshell stub whose profile import
+// fails with "already exists" and whose profile export prints exportYAML.
 func alreadyExistsThenExportStub(t *testing.T, dir, exportYAML string) string {
 	t.Helper()
 	script := `#!/bin/sh
@@ -1675,9 +1671,7 @@ func TestImportProfile_AlreadyExists(t *testing.T) {
 	profilePath := filepath.Join(dir, "my-profile.yaml")
 	require.NoError(t, os.WriteFile(profilePath, []byte("id: my-profile"), 0o644))
 
-	// The gateway's exported content matches the local file exactly — a
-	// parallel process already applied this content, so "already exists"
-	// is a genuine no-op and must not be treated as an error.
+	// Gateway content matches the local file, so "already exists" is a no-op.
 	alreadyExistsThenExportStub(t, dir, "id: my-profile")
 	t.Setenv("PATH", dir)
 
@@ -1689,10 +1683,7 @@ func TestImportProfile_AlreadyExists(t *testing.T) {
 }
 
 // TestImportProfile_AlreadyExists_GatewayMetadataIgnored verifies that a
-// gateway-only metadata field (resource_version) present on the exported
-// side but never declared locally does not register as a mismatch — the
-// bidirectional check added for #7973 only requires *non-metadata* exported
-// fields to also be declared locally.
+// gateway-only metadata field (resource_version) is not a mismatch.
 func TestImportProfile_AlreadyExists_GatewayMetadataIgnored(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "my-profile.yaml")
@@ -1708,18 +1699,15 @@ func TestImportProfile_AlreadyExists_GatewayMetadataIgnored(t *testing.T) {
 	assert.NoError(t, err, "a gateway-only metadata field must not be treated as a content mismatch")
 }
 
-// TestImportProfile_AlreadyExists_StaleContent covers the #7973 regression:
-// the best-effort delete failed because a provider still references the
-// profile, so the reimport's "already exists" reflects the OLD content, not
-// a harmless parallel reimport. ImportProfile must fail loudly instead of
-// caching a false success.
+// TestImportProfile_AlreadyExists_StaleContent covers #7973: a blocked delete
+// leaves old content on the gateway, so ImportProfile must fail rather than
+// cache a false success.
 func TestImportProfile_AlreadyExists_StaleContent(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "my-profile.yaml")
 	require.NoError(t, os.WriteFile(profilePath, []byte("id: my-profile\ncredentials:\n  api_token: GH_TOKEN\n"), 0o644))
 
-	// The gateway's exported content disagrees with the local file (the old
-	// shape is still live because delete was blocked).
+	// Gateway still has the old content.
 	alreadyExistsThenExportStub(t, dir, "id: my-profile\ncredentials: {}\n")
 	t.Setenv("PATH", dir)
 
@@ -1734,21 +1722,14 @@ func TestImportProfile_AlreadyExists_StaleContent(t *testing.T) {
 	assert.True(t, os.IsNotExist(readErr), "cache must not be written on a verified content mismatch")
 }
 
-// TestImportProfile_AlreadyExists_RemovedCredentials covers the
-// removal-direction shape of the #7973 regression: the local profile
-// dropped `credentials` entirely (e.g. switched to a credential-less
-// shape), but the delete was blocked and the gateway still serves the old
-// profile with `credentials` populated. A field-subset check (every local
-// key present in the export) would never notice the removed key at all,
-// since it never looks at fields the local file doesn't declare. The
-// comparison must also check the reverse direction and fail loudly.
+// TestImportProfile_AlreadyExists_RemovedCredentials covers a local profile
+// that dropped `credentials` while the gateway still has them.
 func TestImportProfile_AlreadyExists_RemovedCredentials(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "my-profile.yaml")
 	require.NoError(t, os.WriteFile(profilePath, []byte("id: my-profile\n"), 0o644))
 
-	// Gateway still has the old, wider content with credentials — the
-	// local file's removal was never applied because delete was blocked.
+	// Gateway still has the removed credentials.
 	alreadyExistsThenExportStub(t, dir, "id: my-profile\ncredentials:\n  api_token: GH_TOKEN\n")
 	t.Setenv("PATH", dir)
 
@@ -1763,19 +1744,14 @@ func TestImportProfile_AlreadyExists_RemovedCredentials(t *testing.T) {
 	assert.True(t, os.IsNotExist(readErr), "cache must not be written on a verified content mismatch")
 }
 
-// TestImportProfile_AlreadyExists_RemovedEndpoints covers the fail-open
-// security consequence of the same gap: the local profile dropped a
-// security-relevant `endpoints` grant, but the stale gateway profile still
-// has it configured because the blocked delete never replaced it. Treating
-// this as a match would cache a false success while the old network grant
-// stays active on the gateway.
+// TestImportProfile_AlreadyExists_RemovedEndpoints covers a local profile
+// that dropped an `endpoints` grant the gateway still has.
 func TestImportProfile_AlreadyExists_RemovedEndpoints(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "my-profile.yaml")
 	require.NoError(t, os.WriteFile(profilePath, []byte("id: my-profile\n"), 0o644))
 
-	// Gateway still exposes the old endpoints grant that the local file no
-	// longer declares.
+	// Gateway still has the removed endpoints grant.
 	alreadyExistsThenExportStub(t, dir, "id: my-profile\nendpoints:\n  - host: internal.example.com\n    port: 443\n")
 	t.Setenv("PATH", dir)
 
@@ -1790,10 +1766,8 @@ func TestImportProfile_AlreadyExists_RemovedEndpoints(t *testing.T) {
 	assert.True(t, os.IsNotExist(readErr), "cache must not be written on a verified content mismatch")
 }
 
-// TestImportProfile_AlreadyExists_ExportFails covers the case where the
-// gateway's content cannot be verified at all (e.g. the export subcommand
-// itself errors). ImportProfile must not fall back to trusting "already
-// exists" as success in that case.
+// TestImportProfile_AlreadyExists_ExportFails verifies that an unverifiable
+// "already exists" is not treated as success.
 func TestImportProfile_AlreadyExists_ExportFails(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "my-profile.yaml")
@@ -1909,8 +1883,7 @@ func TestImportProfile_WritesCacheOnAlreadyExists(t *testing.T) {
 	profilePath := filepath.Join(dir, "test.yaml")
 	require.NoError(t, os.WriteFile(profilePath, []byte("id: exists\nname: test"), 0o644))
 
-	// Gateway's exported content matches the local file — genuine
-	// parallel-winner case.
+	// Gateway content matches the local file.
 	alreadyExistsThenExportStub(t, dir, "id: exists\nname: test")
 	t.Setenv("PATH", dir)
 
