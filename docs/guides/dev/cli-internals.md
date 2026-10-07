@@ -20,7 +20,7 @@ fullsend
 │   ├── add-role       <role>                # Register role PEM + ROLE_APP_IDS entry
 │   ├── remove-role    <role>                # Remove role from mint
 │   ├── enroll       <owner/repo>            # Register repo in mint
-│   ├── unenroll     <org|owner/repo>        # Remove org/repo from mint
+│   ├── unenroll     <owner/repo>            # Remove repo from mint
 │   ├── status       [org]                   # Inspect mint state and PEM health
 │   │   ├── --mint-url <url>                 #   Mint service URL ($FULLSEND_MINT_URL)
 │   │   ├── --project <id>                   #   GCP project ID (direct infra queries)
