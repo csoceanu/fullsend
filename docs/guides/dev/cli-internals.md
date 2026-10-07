@@ -216,7 +216,11 @@ fullsend
 `truncated` flag. GitHub review threads are capped at 20 pages; consumers
 must treat `truncated: true` as an incomplete result. GitLab merge-request
 discussions are mapped to the same thread model, including resolution state,
-comments, positions, and resolver identity when GitLab provides it.
+comments, positions, and resolver identity when GitLab provides it. Each comment
+also includes `author_role` and `author_role_verified`; resolved threads include
+`resolved_by_role` and `resolved_by_role_verified`. A role is `none` with
+`verified: true` for an authoritative non-member result, and `verified: false`
+when the actor is a bot/unknown or the permission lookup fails.
 
 The `mint`, `inference`, and `github` subcommands decompose setup into role-specific operations for organizations that separate GCP and GitHub responsibilities:
 

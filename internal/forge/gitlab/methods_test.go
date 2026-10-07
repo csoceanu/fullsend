@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
+	"github.com/fullsend-ai/fullsend/internal/normevent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,6 +76,7 @@ func TestCreateIssue(t *testing.T) {
 func TestListPullRequestReviewThreads(t *testing.T) {
 	client, mux := setupTest(t)
 	actorRequests := map[string]int{}
+	roleRequests := map[string]int{}
 	mux.HandleFunc("/api/v4/users/", func(w http.ResponseWriter, r *http.Request) {
 		actorID := strings.TrimPrefix(r.URL.Path, "/api/v4/users/")
 		actorRequests[actorID]++
@@ -85,10 +87,27 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 20, "username": "reviewer", "bot": false})
 		case "40":
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 40, "username": "unknown", "bot": nil})
+		case "50", "60":
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": actorID, "username": "external-" + actorID, "bot": false})
 		default:
 			writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "404 User Not Found"})
 		}
 	})
+	for _, actorID := range []string{"20", "50", "60"} {
+		actorID := actorID
+		mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/members/all/"+actorID, func(w http.ResponseWriter, _ *http.Request) {
+			roleRequests[actorID]++
+			switch actorID {
+			case "20":
+				writeJSON(t, w, http.StatusOK, map[string]any{"access_level": 30})
+			case "50":
+				writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "404 Member Not Found"})
+			case "60":
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("{"))
+			}
+		})
+	}
 	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/42/discussions", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "100", r.URL.Query().Get("per_page"))
 		assert.Equal(t, "1", r.URL.Query().Get("page"))
@@ -128,8 +147,39 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 					{
 						"id": 11, "body": "resolved with unknown actors", "resolvable": true, "resolved": true,
 						"resolved_by": map[string]any{"id": 40, "username": "unknown-resolver"},
-						"position":    map[string]any{"new_path": "", "old_path": "renamed.go", "old_line": 7},
+						"position":    map[string]any{"new_path": "new.go", "old_path": "renamed.go", "old_line": 7},
 					},
+				},
+			},
+			{
+				"id": "discussion-5",
+				"notes": []map[string]any{
+					{
+						"id": 12, "body": "resolved note", "resolvable": true, "resolved": true,
+						"resolved_by": map[string]any{"id": 20, "username": "reviewer"},
+					},
+					{"id": 13, "body": "still open", "resolvable": true, "resolved": false},
+				},
+			},
+			{
+				"id": "discussion-6",
+				"notes": []map[string]any{
+					{"id": 14, "body": "external author", "resolvable": false, "author": map[string]any{"id": 50, "username": "external-50"}},
+					{"id": 15, "body": "unknown permission", "resolvable": false, "author": map[string]any{"id": 60, "username": "external-60"}},
+				},
+			},
+			{
+				"id": "discussion-7",
+				"notes": []map[string]any{
+					{"id": 16, "body": "older resolution", "resolvable": true, "resolved": true, "resolved_at": "2026-10-06T10:00:00Z", "resolved_by": map[string]any{"id": 20, "username": "older-resolver"}},
+					{"id": 17, "body": "latest resolution", "resolvable": true, "resolved": true, "resolved_at": "2026-10-06T11:00:00Z", "resolved_by": map[string]any{"id": 40, "username": "latest-resolver"}},
+				},
+			},
+			{
+				"id": "discussion-8",
+				"notes": []map[string]any{
+					{"id": 18, "body": "older resolution", "resolvable": true, "resolved": true, "resolved_at": "2026-10-06T10:00:00Z", "resolved_by": map[string]any{"id": 20, "username": "older-resolver"}},
+					{"id": 19, "body": "resolver unavailable", "resolvable": true, "resolved": true, "resolved_at": "2026-10-06T11:00:00Z", "resolved_by": nil},
 				},
 			},
 		})
@@ -137,14 +187,18 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 
 	got, err := client.ListPullRequestReviewThreads(context.Background(), "myorg", "myrepo", 42)
 	require.NoError(t, err)
-	require.Len(t, got.Threads, 4)
+	require.Len(t, got.Threads, 8)
 	assert.Equal(t, "discussion-1", got.Threads[0].ID)
 	assert.True(t, got.Threads[0].IsResolved)
 	assert.Equal(t, "reviewer", got.Threads[0].ResolvedBy)
 	assert.Equal(t, "User", got.Threads[0].ResolvedByType)
+	assert.Equal(t, normevent.RoleWrite, got.Threads[0].ResolvedByRole)
+	assert.True(t, got.Threads[0].ResolvedByRoleVerified)
 	assert.Equal(t, "main.go", got.Threads[0].Path)
 	assert.Equal(t, 17, *got.Threads[0].Line)
 	assert.Equal(t, "Bot", got.Threads[0].Comments[0].AuthorType)
+	assert.Equal(t, normevent.RoleNone, got.Threads[0].Comments[0].AuthorRole)
+	assert.False(t, got.Threads[0].Comments[0].AuthorRoleVerified)
 	assert.False(t, got.Threads[1].IsResolved)
 	assert.Equal(t, "unresolved.go", got.Threads[1].Path, "position data is retained before unresolved notes are skipped")
 	require.NotNil(t, got.Threads[1].Line)
@@ -156,10 +210,28 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	require.Len(t, got.Threads[3].Comments, 1, "system notes must not be returned")
 	assert.Equal(t, "Unknown", got.Threads[3].Comments[0].AuthorType)
 	assert.Equal(t, "Unknown", got.Threads[3].ResolvedByType)
+	assert.Equal(t, normevent.RoleNone, got.Threads[3].ResolvedByRole)
+	assert.False(t, got.Threads[3].ResolvedByRoleVerified)
+	assert.False(t, got.Threads[4].IsResolved, "a discussion with an unresolved resolvable note is not resolved")
+	assert.Empty(t, got.Threads[4].ResolvedBy)
+	assert.Empty(t, got.Threads[4].ResolvedByType)
 	assert.Equal(t, 1, actorRequests["10"])
 	assert.Equal(t, 1, actorRequests["20"], "the actor lookup should be cached per request")
 	assert.Equal(t, 1, actorRequests["30"])
 	assert.Equal(t, 1, actorRequests["40"])
+	assert.Equal(t, normevent.RoleWrite, got.Threads[1].Comments[0].AuthorRole)
+	assert.True(t, got.Threads[1].Comments[0].AuthorRoleVerified)
+	assert.Equal(t, normevent.RoleNone, got.Threads[5].Comments[0].AuthorRole)
+	assert.True(t, got.Threads[5].Comments[0].AuthorRoleVerified)
+	assert.Equal(t, normevent.RoleNone, got.Threads[5].Comments[1].AuthorRole)
+	assert.False(t, got.Threads[5].Comments[1].AuthorRoleVerified)
+	assert.Equal(t, 1, roleRequests["20"], "member lookups should be cached per request")
+	assert.Equal(t, 1, roleRequests["50"])
+	assert.Equal(t, 1, roleRequests["60"])
+	assert.Zero(t, roleRequests["10"], "bot actors must not be treated as human permission actors")
+	assert.Equal(t, "latest-resolver", got.Threads[6].ResolvedBy, "the latest resolved note is the discussion resolver")
+	assert.Empty(t, got.Threads[7].ResolvedBy, "a missing latest resolver must not retain an older resolver")
+	assert.Equal(t, normevent.RoleNone, got.Threads[7].ResolvedByRole)
 }
 
 func TestListPullRequestReviewThreads_DecodeError(t *testing.T) {

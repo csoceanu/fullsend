@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
+	"github.com/fullsend-ai/fullsend/internal/normevent"
 	"golang.org/x/crypto/nacl/box"
 	"golang.org/x/sync/singleflight"
 )
@@ -3714,6 +3715,33 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 
 	result := forge.ReviewThreadPage{}
 	var cursor *string
+	roleCache := make(map[string]struct {
+		role     normevent.ActorRole
+		verified bool
+	})
+	resolveRole := func(login, actorType string) (normevent.ActorRole, bool) {
+		if login == "" || actorType != "User" {
+			return normevent.RoleNone, false
+		}
+		if cached, ok := roleCache[login]; ok {
+			return cached.role, cached.verified
+		}
+		permission, err := c.GetCollaboratorPermission(ctx, owner, repo, login)
+		if err != nil {
+			verified := forge.IsNotFound(err)
+			roleCache[login] = struct {
+				role     normevent.ActorRole
+				verified bool
+			}{normevent.RoleNone, verified}
+			return normevent.RoleNone, verified
+		}
+		role := normevent.MapGitHubPermission(permission)
+		roleCache[login] = struct {
+			role     normevent.ActorRole
+			verified bool
+		}{role, true}
+		return role, true
+	}
 	for page := 1; page <= 20; page++ {
 		variables := map[string]any{
 			"owner":  owner,
@@ -3741,6 +3769,7 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 		for _, thread := range threads.Nodes {
 			converted := forge.ReviewThread{
 				ID:                thread.ID,
+				ResolvedByRole:    normevent.RoleNone,
 				IsResolved:        thread.IsResolved,
 				Path:              thread.Path,
 				Line:              thread.Line,
@@ -3750,13 +3779,17 @@ func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, re
 			if thread.ResolvedBy != nil {
 				converted.ResolvedBy = thread.ResolvedBy.Login
 				converted.ResolvedByType = thread.ResolvedBy.Type
+				converted.ResolvedByRole, converted.ResolvedByRoleVerified = resolveRole(thread.ResolvedBy.Login, thread.ResolvedBy.Type)
 			}
 			for _, comment := range thread.Comments.Nodes {
+				role, roleVerified := resolveRole(comment.Author.Login, comment.Author.Type)
 				converted.Comments = append(converted.Comments, forge.ReviewThreadComment{
-					Author:     comment.Author.Login,
-					AuthorType: comment.Author.Type,
-					Body:       comment.Body,
-					CreatedAt:  comment.CreatedAt,
+					Author:             comment.Author.Login,
+					AuthorType:         comment.Author.Type,
+					AuthorRole:         role,
+					AuthorRoleVerified: roleVerified,
+					Body:               comment.Body,
+					CreatedAt:          comment.CreatedAt,
 				})
 			}
 			result.Threads = append(result.Threads, converted)

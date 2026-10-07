@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
+	"github.com/fullsend-ai/fullsend/internal/normevent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +19,11 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	originalLine := 16
 	var request map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			require.Equal(t, "/repos/owner/repo/collaborators/reviewer/permission", r.URL.Path)
+			json.NewEncoder(w).Encode(map[string]any{"role_name": "write"})
+			return
+		}
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Equal(t, "/graphql", r.URL.Path)
 		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
@@ -64,12 +70,15 @@ func TestListPullRequestReviewThreads(t *testing.T) {
 	assert.Equal(t, forge.ReviewThread{
 		ID: "PRRT_1", IsResolved: true, Path: "main.go", Line: &line,
 		OriginalLine: &originalLine, ResolvedBy: "reviewer", ResolvedByType: "User",
+		ResolvedByRole: normevent.RoleWrite, ResolvedByRoleVerified: true,
 		Comments: []forge.ReviewThreadComment{{
-			Author: "reviewer", AuthorType: "User", Body: "please update this", CreatedAt: "2026-10-04T10:00:00Z",
+			Author: "reviewer", AuthorType: "User", AuthorRole: normevent.RoleWrite, AuthorRoleVerified: true,
+			Body: "please update this", CreatedAt: "2026-10-04T10:00:00Z",
 		}}, CommentsTruncated: true,
 	}, got.Threads[0])
 	assert.Nil(t, got.Threads[1].Line)
 	assert.Empty(t, got.Threads[1].ResolvedBy)
+	assert.Equal(t, normevent.RoleNone, got.Threads[1].ResolvedByRole)
 }
 
 func TestListPullRequestReviewThreads_GHESGraphQLEndpoint(t *testing.T) {
@@ -82,6 +91,35 @@ func TestListPullRequestReviewThreads_GHESGraphQLEndpoint(t *testing.T) {
 	client := New("test-token").WithBaseURL(srv.URL + "/api/v3").WithAfterFunc(noWaitAfter)
 	_, err := client.ListPullRequestReviewThreads(context.Background(), "owner", "repo", 1)
 	require.NoError(t, err)
+}
+
+func TestListPullRequestReviewThreads_RoleLookupFailures(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			switch r.URL.Path {
+			case "/repos/owner/repo/collaborators/missing/permission":
+				w.WriteHeader(http.StatusNotFound)
+			case "/repos/owner/repo/collaborators/failing/permission":
+				w.WriteHeader(http.StatusInternalServerError)
+			default:
+				t.Fatalf("unexpected permission path %s", r.URL.Path)
+			}
+			return
+		}
+
+		_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"id":"thread-1","isResolved":true,"resolvedBy":{"login":"missing","__typename":"User"},"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"failing","__typename":"User"},"body":"comment","createdAt":"2026-10-06T10:00:00Z"},{"author":{"login":"review-bot","__typename":"Bot"},"body":"bot comment","createdAt":"2026-10-06T10:00:00Z"}]}}]}}}}}`))
+	}))
+	defer srv.Close()
+
+	got, err := newTestClient(t, srv).ListPullRequestReviewThreads(context.Background(), "owner", "repo", 1)
+	require.NoError(t, err)
+	require.Len(t, got.Threads, 1)
+	assert.Equal(t, normevent.RoleNone, got.Threads[0].ResolvedByRole)
+	assert.True(t, got.Threads[0].ResolvedByRoleVerified, "a confirmed non-member is authoritative RoleNone")
+	assert.Equal(t, normevent.RoleNone, got.Threads[0].Comments[0].AuthorRole)
+	assert.False(t, got.Threads[0].Comments[0].AuthorRoleVerified, "a failed lookup is not authoritative")
+	assert.Equal(t, normevent.RoleNone, got.Threads[0].Comments[1].AuthorRole)
+	assert.False(t, got.Threads[0].Comments[1].AuthorRoleVerified, "bots do not use human permission roles")
 }
 
 func TestListPullRequestReviewThreads_PaginatesAndCaps(t *testing.T) {

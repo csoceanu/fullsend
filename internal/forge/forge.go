@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/fullsend-ai/fullsend/internal/normevent"
 )
 
 // ConfigRepoName is the conventional name for the org-level fullsend
@@ -469,25 +471,29 @@ type ReviewComment struct {
 // ReviewThreadComment is a comment belonging to a pull-request review thread.
 // AuthorType is the forge's actor type (for example, "Bot" or "User").
 type ReviewThreadComment struct {
-	Author     string `json:"author"`
-	AuthorType string `json:"author_type"`
-	Body       string `json:"body"`
-	CreatedAt  string `json:"created_at"`
+	Author             string              `json:"author"`
+	AuthorType         string              `json:"author_type"`
+	AuthorRole         normevent.ActorRole `json:"author_role"`
+	AuthorRoleVerified bool                `json:"author_role_verified"`
+	Body               string              `json:"body"`
+	CreatedAt          string              `json:"created_at"`
 }
 
 // ReviewThread represents the resolution state and comments of a pull-request
 // review thread. Forges that do not expose review threads return
 // ErrNotSupported.
 type ReviewThread struct {
-	ID                string                `json:"id"`
-	IsResolved        bool                  `json:"is_resolved"`
-	Path              string                `json:"path"`
-	Line              *int                  `json:"line"`
-	OriginalLine      *int                  `json:"original_line"`
-	ResolvedBy        string                `json:"resolved_by"`
-	ResolvedByType    string                `json:"resolved_by_type"`
-	Comments          []ReviewThreadComment `json:"comments"`
-	CommentsTruncated bool                  `json:"comments_truncated"`
+	ID                     string                `json:"id"`
+	IsResolved             bool                  `json:"is_resolved"`
+	Path                   string                `json:"path"`
+	Line                   *int                  `json:"line"`
+	OriginalLine           *int                  `json:"original_line"`
+	ResolvedBy             string                `json:"resolved_by"`
+	ResolvedByType         string                `json:"resolved_by_type"`
+	ResolvedByRole         normevent.ActorRole   `json:"resolved_by_role"`
+	ResolvedByRoleVerified bool                  `json:"resolved_by_role_verified"`
+	Comments               []ReviewThreadComment `json:"comments"`
+	CommentsTruncated      bool                  `json:"comments_truncated"`
 }
 
 // ReviewThreadPage contains a complete fetch of a pull request's review
