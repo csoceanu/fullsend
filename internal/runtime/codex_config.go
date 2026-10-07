@@ -211,20 +211,19 @@ func renderCodexConfig(configDir, repoDir, developerInstructions string) ([]byte
 	return []byte(buf.String()), nil
 }
 
-// codexTOMLString renders s as a TOML basic string, quotes included.
-//
-// The agent body is arbitrary markdown, so a multi-line `"""` literal is not
-// safe: a body containing `"""`, or ending in a backslash, would terminate the
-// literal early and the rest of the file would be parsed as TOML. A
-// single-line basic string with every hazardous rune escaped cannot be broken
-// out of. Per the TOML 1.0 spec a basic string must escape backslash and
-// double quote and may not contain a raw control character; the compact forms
-// are used where they exist and \uXXXX otherwise. Invalid UTF-8 is escaped
-// byte by byte rather than silently replaced.
+// codexTOMLString renders s as a TOML basic string, quotes included. A value
+// with a newline becomes a multi-line basic string, so it reads as written.
+// Backslashes, quotes and control characters are escaped in both forms, so a
+// body containing `"""` or ending in a backslash cannot end the literal early.
 func codexTOMLString(s string) string {
+	multi := strings.Contains(s, "\n")
 	var b strings.Builder
-	b.Grow(len(s) + 2)
-	b.WriteByte('"')
+	b.Grow(len(s) + 8)
+	if multi {
+		b.WriteString("\"\"\"\n")
+	} else {
+		b.WriteByte('"')
+	}
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == utf8.RuneError && size == 1 {
@@ -242,7 +241,11 @@ func codexTOMLString(s string) string {
 		case '\f':
 			b.WriteString(`\f`)
 		case '\n':
-			b.WriteString(`\n`)
+			if multi {
+				b.WriteByte('\n')
+			} else {
+				b.WriteString(`\n`)
+			}
 		case '\r':
 			b.WriteString(`\r`)
 		case '\t':
@@ -259,7 +262,11 @@ func codexTOMLString(s string) string {
 		}
 		i += size
 	}
-	b.WriteByte('"')
+	if multi {
+		b.WriteString(`"""`)
+	} else {
+		b.WriteByte('"')
+	}
 	return b.String()
 }
 
