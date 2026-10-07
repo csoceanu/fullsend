@@ -454,7 +454,6 @@ The GCF provisioner handles full GCP infrastructure deployment:
 │  │ Function          │ SHA256 hash comparison to skip           │
 │  │                   │ redundant deploys                        │
 │  │                   │ Env vars:                                │
-│  │                   │   ALLOWED_ORGS                           │
 │  │                   │   GCP_PROJECT_NUMBER                     │
 │  │                   │   WIF_POOL_NAME                          │
 │  │                   │   WIF_PROVIDER_NAME                      │
