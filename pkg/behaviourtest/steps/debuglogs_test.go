@@ -1135,3 +1135,112 @@ func TestPrepareDebugDir_CreatesPrivateDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 }
+
+// TestWriteWorkflowRunLogs_PartialFetchKeepsCompleteSnapshot checks a later
+// partial fetch of an already-saved run does not replace the complete
+// snapshot, including through the After hook's failure collection.
+func TestWriteWorkflowRunLogs_PartialFetchKeepsCompleteSnapshot(t *testing.T) {
+	artifactDir := t.TempDir()
+	t.Setenv("BEHAVIOUR_ARTIFACT_DIR", artifactDir)
+
+	fake := &sequenceLogsCI{responses: []sequenceLogsResponse{
+		{logs: "=== job ===\ncomplete output\n"},
+		{logs: "=== job ===\n[failed to fetch logs: boom]\n"},
+	}}
+	w := &world.World{Org: "org", RepoName: "repo", CI: fake, Logf: func(string, ...any) {}}
+	run := forge.WorkflowRun{ID: 21, Status: "completed", Conclusion: "failure"}
+
+	logPath, err := writeWorkflowRunLogs(context.Background(), w, "triage", &run)
+	require.NoError(t, err)
+	require.True(t, w.SavedLogRunIDs[21])
+
+	_, err = writeWorkflowRunLogs(context.Background(), w, "triage", &run)
+	require.NoError(t, err)
+	assert.True(t, w.SavedLogRunIDs[21])
+	data, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "complete output")
+	assert.NotContains(t, string(data), "failed to fetch logs")
+
+	w.WorkflowRun = &run
+	CollectFailureLogs(context.Background(), w, fmt.Errorf("boom"))
+	data, err = os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "complete output")
+	assert.Contains(t, readFailureSummary(t, artifactDir), "logs already saved during the scenario")
+}
+
+// TestWriteWorkflowRunLogs_FetchErrorSurvivesDirError checks the empty-log
+// diagnostic and the fetch error are kept when the debug directory also fails.
+func TestWriteWorkflowRunLogs_FetchErrorSurvivesDirError(t *testing.T) {
+	t.Setenv("BEHAVIOUR_ARTIFACT_DIR", "")
+
+	empty := &world.World{Org: "org", RepoName: "repo", CI: &fakeDebugCI{logs: ""}, Logf: func(string, ...any) {}}
+	_, err := writeWorkflowRunLogs(context.Background(), empty, "triage", &forge.WorkflowRun{ID: 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no log output")
+	assert.Contains(t, err.Error(), "BEHAVIOUR_ARTIFACT_DIR is not set")
+
+	failing := &world.World{Org: "org", RepoName: "repo", CI: &fakeDebugCI{logsErr: fmt.Errorf("api down")}, Logf: func(string, ...any) {}}
+	_, err = writeWorkflowRunLogs(context.Background(), failing, "triage", &forge.WorkflowRun{ID: 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetch logs for triage run 1")
+	assert.Contains(t, err.Error(), "api down")
+}
+
+// TestRegisterRedactionLiterals_InfrastructureIdentifiers checks sensitive
+// infrastructure identifiers that no name suffix matches are redacted from
+// summaries and name-derived directory names.
+func TestRegisterRedactionLiterals_InfrastructureIdentifiers(t *testing.T) {
+	artifactDir := t.TempDir()
+	t.Setenv("BEHAVIOUR_ARTIFACT_DIR", artifactDir)
+
+	values := map[string]string{
+		"E2E_GCP_PROJECT_ID":      "gcpprojectidentifier3b7d91",
+		"E2E_GCP_WIF_PROVIDER":    "wifproviderresourcename5c2e80",
+		"E2E_GCP_SERVICE_ACCOUNT": "svcaccountidentifier7a1f64",
+		"CLOUDFLARE_ACCOUNT_ID":   "cfaccountidentifier9e4d27",
+	}
+	var scenario string
+	for name, value := range values {
+		t.Setenv(name, value)
+		scenario += " " + value
+	}
+
+	fake := &fakeListerCI{runs: []forge.WorkflowRun{{ID: 31, Name: "Deploy " + values["E2E_GCP_PROJECT_ID"]}}}
+	w := &world.World{Org: "org", RepoName: "repo", CI: fake, ScenarioName: "scenario" + scenario, Logf: func(string, ...any) {}}
+
+	CollectFailureLogs(context.Background(), w, fmt.Errorf("denied for %s", values["E2E_GCP_SERVICE_ACCOUNT"]))
+
+	require.NoError(t, filepath.WalkDir(artifactDir, func(path string, d os.DirEntry, err error) error {
+		require.NoError(t, err)
+		rel, relErr := filepath.Rel(artifactDir, path)
+		require.NoError(t, relErr)
+		for _, v := range values {
+			assert.NotContains(t, rel, v, "path")
+			if !d.IsDir() {
+				data, readErr := os.ReadFile(path)
+				require.NoError(t, readErr)
+				assert.NotContains(t, string(data), v, "content of "+rel)
+			}
+		}
+		return nil
+	}))
+}
+
+// TestLogRedacted_NeutralizesWorkflowCommands checks forge-supplied text with
+// newlines or workflow-command delimiters cannot start a console command line.
+func TestLogRedacted_NeutralizesWorkflowCommands(t *testing.T) {
+	var logged []string
+	w := &world.World{Logf: func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }}
+
+	logRedacted(w, "collect failure logs: %v", fmt.Errorf("bad response\n::warning::injected\r\n::error::more\x1b[31m\x00"))
+
+	require.Len(t, logged, 1)
+	assert.NotContains(t, logged[0], "\n")
+	assert.NotContains(t, logged[0], "\r")
+	assert.NotContains(t, logged[0], "\x1b")
+	assert.NotContains(t, logged[0], "\x00")
+	assert.NotContains(t, logged[0], "::")
+	assert.Contains(t, logged[0], "injected")
+}

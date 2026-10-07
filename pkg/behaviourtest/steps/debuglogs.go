@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
 	"github.com/fullsend-ai/fullsend/internal/security"
@@ -101,19 +103,21 @@ func writeWorkflowRunLogs(ctx context.Context, w *world.World, label string, run
 
 	logs, fetchErr := w.CI.GetRunLogs(fetchCtx, w.Org, w.RepoName, run.ID)
 
-	debugDir, err := prepareDebugDir(label, run.ID)
-	if err != nil {
-		return "", errors.Join(fetchErr, err)
-	}
-
 	// Both forge clients return an empty string and no error when the run
 	// has no jobs to read (for example a run that has not started any job).
 	// Empty output is not a log snapshot: report it as unavailable, with an
 	// explanation, and leave the run unsaved so the After hook fetches it again.
+	// The fetch error is given its context here, before the debug directory
+	// is prepared, so a directory failure cannot drop it.
 	if fetchErr == nil && strings.TrimSpace(logs) == "" {
 		fetchErr = fmt.Errorf("the forge returned no log output for %s run %d (the run may have no jobs yet, or its logs have expired)", label, run.ID)
 	} else if fetchErr != nil {
 		fetchErr = fmt.Errorf("fetch logs for %s run %d: %w", label, run.ID, fetchErr)
+	}
+
+	debugDir, err := prepareDebugDir(label, run.ID)
+	if err != nil {
+		return "", errors.Join(fetchErr, err)
 	}
 
 	if fetchErr != nil {
@@ -127,6 +131,13 @@ func writeWorkflowRunLogs(ctx context.Context, w *world.World, label string, run
 	}
 
 	logPath := filepath.Join(debugDir, "workflow-logs.txt")
+	complete := runLogsComplete(*run, logs)
+	// A complete snapshot already saved for this run is never replaced by a
+	// partial one: SavedLogRunIDs is only ever set, so overwriting would
+	// lose the complete logs while the run stays marked as saved.
+	if !complete && w.SavedLogRunIDs[run.ID] {
+		return logPath, nil
+	}
 	if err := writeRedactedArtifact(logPath, logs); err != nil {
 		return "", err
 	}
@@ -139,7 +150,7 @@ func writeWorkflowRunLogs(ctx context.Context, w *world.World, label string, run
 	// terminal status, or whose log text embeds a per-job fetch failure, is
 	// fetched again by CollectFailureLogs so the After hook can replace the
 	// partial snapshot before the repository is deleted.
-	if runLogsComplete(*run, logs) {
+	if complete {
 		if w.SavedLogRunIDs == nil {
 			w.SavedLogRunIDs = make(map[int]bool)
 		}
@@ -184,9 +195,20 @@ func runLogsComplete(run forge.WorkflowRun, logs string) bool {
 // credentials and are registered with the redactor as exact literals.
 var sensitiveEnvSuffixes = []string{"_TOKEN", "_PAT", "_PEM", "_SECRET", "_PASSWORD", "_KEY", "_CREDENTIALS"}
 
+// sensitiveEnvNames are runner environment variables whose values are
+// sensitive infrastructure identifiers that no name suffix identifies.
+var sensitiveEnvNames = []string{
+	"E2E_GCP_PROJECT_ID",
+	"E2E_GCP_MINT_PROJECT_ID",
+	"E2E_GCP_WIF_PROVIDER",
+	"E2E_GCP_SERVICE_ACCOUNT",
+	"CLOUDFLARE_ACCOUNT_ID",
+}
+
 // registerRedactionLiterals registers the runner's known credential literals
-// — w.Token and the values of sensitive-looking environment variables —
-// with the process-wide secret redactor. Prefix and structural patterns
+// — w.Token, the values of sensitive-looking environment variables and the
+// explicitly listed infrastructure identifiers — with the process-wide
+// secret redactor. Prefix and structural patterns
 // cannot recognise an opaque credential, which would otherwise survive in
 // summaries, diagnostics and name-derived directory names. The redactor
 // ignores values that are too short to be safely masked.
@@ -200,6 +222,10 @@ func registerRedactionLiterals(w *world.World) {
 			continue
 		}
 		name = strings.ToUpper(name)
+		if slices.Contains(sensitiveEnvNames, name) {
+			registerSecretForms(value)
+			continue
+		}
 		for _, suffix := range sensitiveEnvSuffixes {
 			if strings.HasSuffix(name, suffix) {
 				registerSecretForms(value)
@@ -230,14 +256,29 @@ func redactText(s string) string {
 	return s
 }
 
-// logRedacted formats a diagnostic message and redacts it before handing it
-// to the world logger: errors, scenario names and paths can carry
-// credentials, and the CI artifact redaction does not reach console output.
+// sanitizeConsole neutralizes text that GitHub Actions would interpret when
+// printed to the console: line breaks and other control characters are
+// replaced with spaces so interpolated text cannot start a new line, and the
+// "::" workflow-command delimiter is broken up.
+func sanitizeConsole(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.ReplaceAll(s, "::", ": :")
+}
+
+// logRedacted formats a diagnostic message, redacts it and sanitizes it for
+// the console before handing it to the world logger: errors, scenario names
+// and paths can carry credentials or forge-supplied text, and neither the CI
+// artifact redaction nor the runner reaches console output.
 func logRedacted(w *world.World, format string, args ...any) {
 	if w.Logf == nil {
 		return
 	}
-	w.Logf("%s", redactText(fmt.Sprintf(format, args...)))
+	w.Logf("%s", sanitizeConsole(redactText(fmt.Sprintf(format, args...))))
 }
 
 // CollectFailureLogs is called by the suite's After hook for a failed
