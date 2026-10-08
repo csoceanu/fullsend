@@ -201,7 +201,7 @@ func renderCodexConfig(configDir, repoDir, developerInstructions string) ([]byte
 		BaseURL:               codexBaseURL,
 		DeveloperInstructions: codexTOMLString(developerInstructions),
 		AuthCommand:           codexTOMLString(configDir + "/" + codexAuthScriptFile),
-		ProjectKey:            codexTOMLString(repoDir),
+		ProjectKey:            codexTOMLKey(repoDir),
 		RefreshIntervalMS:     codexAuthRefreshIntervalMS,
 		TimeoutMS:             codexAuthTimeoutMS,
 	})
@@ -216,7 +216,16 @@ func renderCodexConfig(configDir, repoDir, developerInstructions string) ([]byte
 // Backslashes, quotes and control characters are escaped in both forms, so a
 // body containing `"""` or ending in a backslash cannot end the literal early.
 func codexTOMLString(s string) string {
-	multi := strings.Contains(s, "\n")
+	return codexTOMLBasicString(s, strings.Contains(s, "\n"))
+}
+
+// codexTOMLKey renders s as a quoted key. A table header cannot hold a
+// multi-line string, so a newline stays escaped.
+func codexTOMLKey(s string) string {
+	return codexTOMLBasicString(s, false)
+}
+
+func codexTOMLBasicString(s string, multi bool) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
 	if multi {
