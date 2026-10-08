@@ -1193,7 +1193,8 @@ func (p *Provisioner) ensureWIFPoolAndProvider(ctx context.Context, installingOr
 //     installing owner is not added.
 //   - An existing provider keeps its attribute condition exactly as-is
 //     (including any legacy org entries). It is still re-applied so audiences
-//     and enabled state converge.
+//     and enabled state converge. An empty or whitespace-only existing
+//     condition is replaced with the placeholder-only condition.
 //   - Public mint mode keeps its permissive condition.
 //
 // Org-scoped inference WIF goes through ensureWIFPoolAndProvider instead.
@@ -1218,9 +1219,12 @@ func (p *Provisioner) ensureMintWIFPoolAndProvider(ctx context.Context) (*wifMer
 	switch {
 	case p.cfg.PublicMint:
 		attrCondition = buildPublicAttributeCondition()
-	case existingProvider != nil:
+	case existingProvider != nil && strings.TrimSpace(existingProvider.AttributeCondition) != "":
 		attrCondition = existingProvider.AttributeCondition
 	default:
+		// New provider, or an existing one whose condition was emptied out of
+		// band: fall back to the placeholder-only condition rather than
+		// re-applying an empty (permissive) condition.
 		attrCondition = buildAttributeCondition([]string{PlaceholderOrg})
 	}
 

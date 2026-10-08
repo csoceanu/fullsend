@@ -1807,6 +1807,39 @@ func TestProvisioner_Provision_ExistingMint_PreservesWIFCondition(t *testing.T) 
 	}
 }
 
+// An existing provider with an empty or whitespace-only condition (only
+// possible through out-of-band edits) is repaired to the placeholder-only
+// condition on redeploy instead of being re-applied as-is.
+func TestProvisioner_Provision_ExistingMint_EmptyWIFConditionRepaired(t *testing.T) {
+	for name, condition := range map[string]string{"empty": "", "whitespace": "  \t\n"} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakeGCFClient()
+			fake.functionInfo = &FunctionInfo{
+				URI: "https://mint.run.app",
+				EnvVars: map[string]string{
+					"ALLOWED_ORGS": "existing-org",
+					"ROLE_APP_IDS": `{"coder":"999"}`,
+				},
+			}
+			fake.wifProvider = &WIFProviderInfo{AttributeCondition: condition}
+
+			p := newTestProvisioner(Config{
+				ProjectID:         "test-project-id",
+				GitHubOrgs:        []string{"new-org"},
+				AgentPEMs:         singleRolePEMs(),
+				AgentAppIDs:       singleRoleAppIDs(),
+				FunctionSourceDir: fakeFunctionSourceDir(t),
+			}, fake)
+
+			_, err := p.Provision(context.Background())
+			require.NoError(t, err)
+
+			assert.Equal(t, "assertion.repository_owner == '"+PlaceholderOrg+"'",
+				fake.lastWIFProviderConfig.AttributeCondition)
+		})
+	}
+}
+
 // Per-repo enrollment on a newly deployed mint still registers the repo in
 // PER_REPO_WIF_REPOS without creating org-level WIF or IAM state.
 func TestProvisioner_Provision_NewMint_PerRepoEnrollment(t *testing.T) {
