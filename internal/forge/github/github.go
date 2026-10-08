@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fullsend-ai/fullsend/internal/forge"
+	"github.com/fullsend-ai/fullsend/internal/normevent"
 	"golang.org/x/crypto/nacl/box"
 	"golang.org/x/sync/singleflight"
 )
@@ -306,6 +307,9 @@ func (c *LiveClient) do(ctx context.Context, method, path string, body any, head
 
 func (c *LiveClient) doRequest(ctx context.Context, method, path string, contentLength int64, open func() (io.ReadCloser, error), headers ...requestHeader) (*http.Response, error) {
 	url := c.baseURL + path
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		url = path
+	}
 
 	for attempt := range maxRetries {
 		var reqBody io.Reader
@@ -3627,6 +3631,178 @@ func (c *LiveClient) ListPullRequestReviews(ctx context.Context, owner, repo str
 
 		if len(raw) < 100 {
 			break
+		}
+	}
+	return result, nil
+}
+
+// ListPullRequestReviewThreads returns the pull request's review threads and
+// their comments through GitHub's GraphQL API. GitHub exposes review threads
+// only through GraphQL, so keeping this operation here prevents callers from
+// bypassing the forge abstraction with a raw `gh api` invocation.
+func (c *LiveClient) ListPullRequestReviewThreads(ctx context.Context, owner, repo string, number int) (forge.ReviewThreadPage, error) {
+	const query = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+		repository(owner: $owner, name: $name) {
+			pullRequest(number: $number) {
+				reviewThreads(first: 100, after: $cursor) {
+					pageInfo { hasNextPage endCursor }
+					nodes {
+						id
+						isResolved
+						path
+						line
+						originalLine
+						resolvedBy { login __typename }
+						comments(first: 100) {
+							pageInfo { hasNextPage }
+							nodes {
+								author { login __typename }
+								body
+								createdAt
+							}
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	type gqlThread struct {
+		ID           string `json:"id"`
+		IsResolved   bool   `json:"isResolved"`
+		Path         string `json:"path"`
+		Line         *int   `json:"line"`
+		OriginalLine *int   `json:"originalLine"`
+		ResolvedBy   *struct {
+			Login string `json:"login"`
+			Type  string `json:"__typename"`
+		} `json:"resolvedBy"`
+		Comments struct {
+			PageInfo struct {
+				HasNextPage bool `json:"hasNextPage"`
+			} `json:"pageInfo"`
+			Nodes []struct {
+				Author struct {
+					Login string `json:"login"`
+					Type  string `json:"__typename"`
+				} `json:"author"`
+				Body      string `json:"body"`
+				CreatedAt string `json:"createdAt"`
+			} `json:"nodes"`
+		} `json:"comments"`
+	}
+
+	type gqlResult struct {
+		Data struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewThreads struct {
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+						Nodes []gqlThread `json:"nodes"`
+					} `json:"reviewThreads"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	result := forge.ReviewThreadPage{}
+	var cursor *string
+	roleCache := make(map[string]struct {
+		role     normevent.ActorRole
+		verified bool
+	})
+	resolveRole := func(login, actorType string) (normevent.ActorRole, bool) {
+		if login == "" || actorType != "User" {
+			return normevent.RoleNone, false
+		}
+		if cached, ok := roleCache[login]; ok {
+			return cached.role, cached.verified
+		}
+		permission, err := c.GetCollaboratorPermission(ctx, owner, repo, login)
+		if err != nil {
+			verified := forge.IsNotFound(err)
+			roleCache[login] = struct {
+				role     normevent.ActorRole
+				verified bool
+			}{normevent.RoleNone, verified}
+			return normevent.RoleNone, verified
+		}
+		role := normevent.MapGitHubPermission(permission)
+		roleCache[login] = struct {
+			role     normevent.ActorRole
+			verified bool
+		}{role, true}
+		return role, true
+	}
+	for page := 1; page <= 20; page++ {
+		variables := map[string]any{
+			"owner":  owner,
+			"name":   repo,
+			"number": number,
+			"cursor": cursor,
+		}
+		graphqlURL := strings.TrimRight(c.baseURL, "/") + "/graphql"
+		if strings.HasSuffix(strings.TrimRight(c.baseURL, "/"), "/api/v3") {
+			graphqlURL = strings.TrimSuffix(strings.TrimRight(c.baseURL, "/"), "/api/v3") + "/api/graphql"
+		}
+		resp, err := c.post(ctx, graphqlURL, map[string]any{"query": query, "variables": variables})
+		if err != nil {
+			return forge.ReviewThreadPage{}, fmt.Errorf("list pull request review threads page %d: %w", page, err)
+		}
+		var decoded gqlResult
+		if err := decodeJSON(resp, &decoded); err != nil {
+			return forge.ReviewThreadPage{}, fmt.Errorf("decode pull request review threads page %d: %w", page, err)
+		}
+		if len(decoded.Errors) > 0 {
+			return forge.ReviewThreadPage{}, fmt.Errorf("list pull request review threads: %s", decoded.Errors[0].Message)
+		}
+
+		threads := decoded.Data.Repository.PullRequest.ReviewThreads
+		for _, thread := range threads.Nodes {
+			converted := forge.ReviewThread{
+				ID:                thread.ID,
+				ResolvedByRole:    normevent.RoleNone,
+				IsResolved:        thread.IsResolved,
+				Path:              thread.Path,
+				Line:              thread.Line,
+				OriginalLine:      thread.OriginalLine,
+				CommentsTruncated: thread.Comments.PageInfo.HasNextPage,
+			}
+			if thread.ResolvedBy != nil {
+				converted.ResolvedBy = thread.ResolvedBy.Login
+				converted.ResolvedByType = thread.ResolvedBy.Type
+				converted.ResolvedByRole, converted.ResolvedByRoleVerified = resolveRole(thread.ResolvedBy.Login, thread.ResolvedBy.Type)
+			}
+			for _, comment := range thread.Comments.Nodes {
+				role, roleVerified := resolveRole(comment.Author.Login, comment.Author.Type)
+				converted.Comments = append(converted.Comments, forge.ReviewThreadComment{
+					Author:             comment.Author.Login,
+					AuthorType:         comment.Author.Type,
+					AuthorRole:         role,
+					AuthorRoleVerified: roleVerified,
+					Body:               comment.Body,
+					CreatedAt:          comment.CreatedAt,
+				})
+			}
+			result.Threads = append(result.Threads, converted)
+		}
+
+		if !threads.PageInfo.HasNextPage {
+			break
+		}
+		if threads.PageInfo.EndCursor == "" {
+			return forge.ReviewThreadPage{}, fmt.Errorf("list pull request review threads page %d: missing pagination cursor", page)
+		}
+		next := threads.PageInfo.EndCursor
+		cursor = &next
+		if page == 20 {
+			result.Truncated = true
 		}
 	}
 	return result, nil
