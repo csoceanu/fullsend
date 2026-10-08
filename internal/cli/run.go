@@ -1936,7 +1936,7 @@ func runAgent(ctx context.Context, agentName, fullsendDir, outputBase, targetRep
 				postCmd.Env = append(postCmd.Env, fmt.Sprintf("FULLSEND_VALIDATED_ITERATION_DIR=%s", postValidatedIterDir))
 			}
 			// Pass the behavioral exit reason (e.g., "error_max_turns",
-			// "error_max_cost") so the post-script can distinguish "agent
+			// "error_max_budget_usd") so the post-script can distinguish "agent
 			// chose not to change anything" from "agent was interrupted
 			// mid-work." See #6877.
 			if agentExitReason != "" {
@@ -2514,7 +2514,7 @@ func runAgent(ctx context.Context, agentName, fullsendDir, outputBase, targetRep
 		// The transcript is checked regardless of exit code to catch both:
 		// 1. API/infra failures where Claude exits 0 but reports errors
 		//    (is_error:true) — these skip the post-script entirely (#2786).
-		// 2. Behavioral limits (error_max_turns, error_max_cost) where
+		// 2. Behavioral limits (error_max_turns, error_max_budget_usd) where
 		//    Claude exits non-zero mid-work — these pass the reason to
 		//    the post-script so it can report accurately (#6877).
 		// This runs before the agent span is finalized so the span's
@@ -3235,7 +3235,7 @@ func iterationTimedOut(exitCode int, elapsed, timeout time.Duration) bool {
 
 // iterationTimedOutUnlessBehavioral is iterationTimedOut except that an
 // iteration which ended with a recognized behavioral limit (error_max_turns,
-// error_max_cost — the agent ran to completion and reported why it stopped)
+// error_max_budget_usd — the agent ran to completion and reported why it stopped)
 // and a positive exit code is not presumed killed, even when it finished
 // past 90 % of the budget. That keeps the post-script reachable so it can
 // report the interruption reason. A killed exit (negative code) still counts
@@ -4108,7 +4108,7 @@ func finalizeSandboxSpan(span trace.Span, err error) {
 // a misleading "no changes needed" message. See #6877.
 func isBehavioralExitSubtype(subtype string) bool {
 	switch subtype {
-	case "error_max_turns", "error_max_cost":
+	case "error_max_turns", "error_max_budget_usd":
 		return true
 	default:
 		return false
@@ -4131,7 +4131,7 @@ type transcriptCheckOutcome struct {
 
 // classifyTranscriptError determines how a transcript error should be
 // handled based on its subtype and the process exit code. Three categories:
-//  1. Behavioral limits (error_max_turns, error_max_cost): pass the reason
+//  1. Behavioral limits (error_max_turns, error_max_budget_usd): pass the reason
 //     to the post-script so it can report accurately. See #6877.
 //  2. API/infra failures with exit code 0: override the exit code to 1 so
 //     the post-script is skipped. See #2786.

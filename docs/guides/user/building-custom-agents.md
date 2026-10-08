@@ -473,7 +473,7 @@ fi
 
 When the agent hits a behavioral limit (turn limit or cost limit), the
 harness sets `FULLSEND_AGENT_EXIT_REASON` to the error subtype before
-running the post-script. Known subtypes: `error_max_turns`, `error_max_cost`.
+running the post-script. Known subtypes: `error_max_turns`, `error_max_budget_usd`.
 Check this variable to distinguish "agent chose not to change anything" from
 "agent was interrupted mid-work":
 

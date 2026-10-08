@@ -3359,7 +3359,8 @@ func TestIsBehavioralExitSubtype(t *testing.T) {
 		want    bool
 	}{
 		{"max turns", "error_max_turns", true},
-		{"max cost", "error_max_cost", true},
+		{"max budget", "error_max_budget_usd", true},
+		{"legacy max cost spelling", "error_max_cost", false},
 		{"success", "success", false},
 		{"unknown error", "error_unknown", false},
 		{"empty string", "", false},
@@ -3393,10 +3394,10 @@ func TestClassifyTranscriptError(t *testing.T) {
 			wantWarnContains: "Agent hit behavioral limit:",
 		},
 		{
-			name:             "behavioral exit max cost",
-			subtype:          "error_max_cost",
+			name:             "behavioral exit max budget",
+			subtype:          "error_max_budget_usd",
 			exitCode:         1,
-			wantExitReason:   "error_max_cost",
+			wantExitReason:   "error_max_budget_usd",
 			wantOverrideExit: false,
 			wantWarnContains: "Agent hit behavioral limit:",
 		},
@@ -4540,7 +4541,7 @@ func TestIterationTimedOutUnlessBehavioral(t *testing.T) {
 	const timeout = 30 * time.Minute
 	late := 28 * time.Minute
 	assert.False(t, iterationTimedOutUnlessBehavioral(2, late, timeout, "error_max_turns"), "behavioral exit at 93 %")
-	assert.False(t, iterationTimedOutUnlessBehavioral(1, late, timeout, "error_max_cost"), "behavioral cost exit at 93 %")
+	assert.False(t, iterationTimedOutUnlessBehavioral(1, late, timeout, "error_max_budget_usd"), "behavioral budget exit at 93 %")
 	assert.True(t, iterationTimedOutUnlessBehavioral(-1, timeout, timeout, "error_max_turns"), "killed exit stays a timeout")
 	assert.True(t, iterationTimedOutUnlessBehavioral(2, late, timeout, ""), "non-behavioral failure at 93 %")
 	assert.True(t, iterationTimedOutUnlessBehavioral(2, late, timeout, "error_unknown"), "unrecognized reason at 93 %")

@@ -556,13 +556,13 @@ Vendoring commit messages use title + body (upload and stale delete). `admin ins
 │  │                   │ the agent hit a behavioral limit rather  │
 │  │                   │ than crashing or succeeding. Known       │
 │  │                   │ subtypes: error_max_turns (turn limit),  │
-│  │                   │ error_max_cost (cost limit). Unlike API/ │
-│  │                   │ infrastructure errors (which skip the    │
-│  │                   │ post-script entirely), behavioral exits  │
-│  │                   │ still run the post-script so it can      │
-│  │                   │ report accurately instead of emitting a  │
-│  │                   │ misleading "no changes needed" message.  │
-│  │                   │ See #6877.                               │
+│  │                   │ error_max_budget_usd (cost limit).       │
+│  │                   │ Unlike API/infrastructure errors (which  │
+│  │                   │ skip the post-script entirely),          │
+│  │                   │ behavioral exits still run the           │
+│  │                   │ post-script so it can report accurately  │
+│  │                   │ instead of emitting a misleading "no     │
+│  │                   │ changes needed" message. See #6877.      │
 │  └──────┬───────────┘                                           │
 │         ▼                                                       │
 │  ┌──────────────────┐                                           │
