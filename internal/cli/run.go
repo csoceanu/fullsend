@@ -1625,6 +1625,10 @@ func runAgent(ctx context.Context, agentName, fullsendDir, outputBase, targetRep
 	var lastExitCode int
 	var transcriptErrorOverride bool
 	var agentExitReason string // behavioral exit subtype (e.g., "error_max_turns") passed to post-script; see #6877
+	// iterExitReasons records each iteration's behavioral exit reason so the
+	// post-loop sweep can assign the reason of the iteration it validates
+	// rather than the last iteration's. See #6877.
+	iterExitReasons := map[int]string{}
 	var runCount int
 	tracer, tracingCleanup := telemetry.Setup(runDir, Version())
 	tid := resolveTraceIdentity(ctx, tracer, os.Getenv("TRACEPARENT"), os.Getenv("TRACESTATE"), []attribute.KeyValue{
@@ -2522,6 +2526,7 @@ func runAgent(ctx context.Context, agentName, fullsendDir, outputBase, targetRep
 			outcome := classifyTranscriptError(transcriptErrMsg, te.Subtype, exitCode)
 			if outcome.exitReason != "" {
 				agentExitReason = outcome.exitReason
+				iterExitReasons[iteration] = outcome.exitReason
 			}
 			if outcome.overrideExitCode {
 				lastExitCode = 1
@@ -2549,7 +2554,7 @@ func runAgent(ctx context.Context, agentName, fullsendDir, outputBase, targetRep
 		} else {
 			printer.StepWarn(fmt.Sprintf("Agent exited with code %d", lastExitCode))
 		}
-		lastIterTimedOut = iterationTimedOut(lastExitCode, lastIterElapsed, timeout)
+		lastIterTimedOut = iterationTimedOutUnlessBehavioral(lastExitCode, lastIterElapsed, timeout, agentExitReason)
 		if lastIterTimedOut {
 			// The exec ended at the budget but the agent's processes did
 			// not (OpenShell has no per-exec kill). Terminate them before
@@ -2723,12 +2728,12 @@ func runAgent(ctx context.Context, agentName, fullsendDir, outputBase, targetRep
 		validationPassed = sweep.passed
 		repoExtractedOK = sweep.repoExtractedOK
 		validatedIterNum = sweep.validatedIter
-		// If the sweep validated an earlier iteration, clear
-		// agentExitReason so the post-script does not receive the last
-		// iteration's behavioral exit reason for an iteration that may
-		// not have hit a behavioral limit. See #6877.
-		if sweep.validatedIter > 0 && sweep.validatedIter != runCount {
-			agentExitReason = ""
+		// Assign the behavioral exit reason of the iteration the sweep
+		// validated, not the last iteration's: an earlier validated
+		// iteration neither inherits a later iteration's reason nor loses
+		// its own. See #6877.
+		if sweep.validatedIter > 0 {
+			agentExitReason = iterExitReasons[sweep.validatedIter]
 		}
 	}
 
@@ -3226,6 +3231,20 @@ func effectiveTimeoutMinutes(h *harness.Harness) int {
 // lastExitCode is the one input that means the same on all runtimes.
 func iterationTimedOut(exitCode int, elapsed, timeout time.Duration) bool {
 	return exitCode != 0 && agentTimedOut(elapsed, timeout)
+}
+
+// iterationTimedOutUnlessBehavioral is iterationTimedOut except that an
+// iteration which ended with a recognized behavioral limit (error_max_turns,
+// error_max_cost — the agent ran to completion and reported why it stopped)
+// and a positive exit code is not presumed killed, even when it finished
+// past 90 % of the budget. That keeps the post-script reachable so it can
+// report the interruption reason. A killed exit (negative code) still counts
+// as a timeout. See #6877.
+func iterationTimedOutUnlessBehavioral(exitCode int, elapsed, timeout time.Duration, exitReason string) bool {
+	if exitCode > 0 && isBehavioralExitSubtype(exitReason) {
+		return false
+	}
+	return iterationTimedOut(exitCode, elapsed, timeout)
 }
 
 // iterationEnvFile is the runner-owned file .env sources after every

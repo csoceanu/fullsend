@@ -4532,6 +4532,27 @@ func TestIterationTimedOut(t *testing.T) {
 	assert.False(t, iterationTimedOut(1, 3*time.Minute, timeout), "early exit with bad output")
 }
 
+// TestIterationTimedOutUnlessBehavioral pins that a recognized behavioral
+// limit exit is not presumed killed near the budget (#6877), while a killed
+// exit or a non-behavioral failure keeps the timeout treatment.
+func TestIterationTimedOutUnlessBehavioral(t *testing.T) {
+	t.Parallel()
+	const timeout = 30 * time.Minute
+	late := 28 * time.Minute
+	assert.False(t, iterationTimedOutUnlessBehavioral(2, late, timeout, "error_max_turns"), "behavioral exit at 93 %")
+	assert.False(t, iterationTimedOutUnlessBehavioral(1, late, timeout, "error_max_cost"), "behavioral cost exit at 93 %")
+	assert.True(t, iterationTimedOutUnlessBehavioral(-1, timeout, timeout, "error_max_turns"), "killed exit stays a timeout")
+	assert.True(t, iterationTimedOutUnlessBehavioral(2, late, timeout, ""), "non-behavioral failure at 93 %")
+	assert.True(t, iterationTimedOutUnlessBehavioral(2, late, timeout, "error_unknown"), "unrecognized reason at 93 %")
+	assert.False(t, iterationTimedOutUnlessBehavioral(0, late, timeout, ""), "clean exit")
+
+	// With the behavioral exit not counted as a timeout, the run ends
+	// without a terminal error, so the post-script (guarded on runErr) runs.
+	timedOut := iterationTimedOutUnlessBehavioral(2, late, timeout, "error_max_turns")
+	assert.NoError(t, runTerminalError(false, false, timedOut, 1, late, timeout))
+	assert.NoError(t, runTerminalError(true, true, timedOut, 1, late, timeout))
+}
+
 // TestIterationEnvSourceLine pins the last line of .env: sourcing an absent
 // file must not turn .env's exit status non-zero.
 func TestIterationEnvSourceLine(t *testing.T) {
