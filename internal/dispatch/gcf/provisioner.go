@@ -521,8 +521,8 @@ func (p *Provisioner) verifyMintURL(ctx context.Context, expectedURL string) err
 }
 
 // RegisterPerRepoWIF adds a repo to the mint's PER_REPO_WIF_REPOS env var
-// so the mint routes OIDC tokens from that repo to a dedicated WIF provider
-// instead of the org-level default. Idempotent — skips repos already listed.
+// so the mint routes OIDC tokens from that repo to a dedicated WIF provider.
+// Idempotent — skips repos already listed.
 // Not safe for concurrent calls — run per-repo installs sequentially when
 // sharing a mint.
 func (p *Provisioner) RegisterPerRepoWIF(ctx context.Context, repo string) error {

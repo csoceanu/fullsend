@@ -306,7 +306,7 @@ During installation, the GCF provisioner creates:
 1. **Service Account** — For the Cloud Function identity
 2. **WIF Pool** — `fullsend-inference` for inference, `fullsend-pool` for mint
 3. **WIF Provider** — Maps GitHub OIDC claims to GCP attributes
-4. **IAM Bindings** — Grants `roles/aiplatform.user` to federated identities
+4. **IAM Bindings** — Grants `roles/aiplatform.user` to federated identities (created only by inference provisioning, `ProvisionWIF` / `fullsend inference provision`; mint deployment does not create these bindings)
 5. **Per-repo providers** (per-repo mode) — Scoped WIF provider per repository via `mintcore.BuildRepoProviderID()` (GitHub only; GitLab uses a shared `gitlab-oidc` provider scoped via attribute conditions on the WIF pool)
 
 ---
@@ -438,12 +438,6 @@ The GCF provisioner handles full GCP infrastructure deployment:
 │  │ Provider          │ OIDC issuer:                             │
 │  │                   │   token.actions.githubusercontent.com    │
 │  │                   │ (skip if exists)                         │
-│  └─────────┬─────────┘                                          │
-│            ▼                                                    │
-│  ┌───────────────────┐                                          │
-│  │ Grant Agent       │ roles/aiplatform.user                    │
-│  │ Platform access   │ on the inference project                 │
-│  │ to federated IDs  │                                          │
 │  └─────────┬─────────┘                                          │
 │            ▼                                                    │
 │  ┌───────────────────┐                                          │
