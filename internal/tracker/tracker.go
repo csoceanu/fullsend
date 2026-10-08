@@ -18,6 +18,7 @@ package tracker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 )
 
@@ -52,6 +53,13 @@ type Issue struct {
 	Body   Body
 	URL    string
 	Labels []string
+	// IssueType is the tracker's issue type name (e.g. "Bug", "Story").
+	// Set by the Jira client; empty for trackers that don't report one.
+	IssueType string
+	// CustomFields maps tracker-specific custom field IDs (e.g. Jira's
+	// "customfield_10875") to their raw JSON values. Set by the Jira
+	// client; nil for GitHub and GitLab.
+	CustomFields map[string]json.RawMessage
 }
 
 // Comment represents a comment on an issue.

@@ -112,12 +112,18 @@ func (c *JiraClient) GetIssue(ctx context.Context, project string, number int) (
 	if err != nil {
 		return nil, wrapNotFound(err)
 	}
+	var issueType string
+	if issue.Fields.IssueType != nil {
+		issueType = issue.Fields.IssueType.Name
+	}
 	return &Issue{
-		Number: number,
-		Title:  issue.Fields.Summary,
-		Body:   Body(jira.ADFToMarkdown(issue.Fields.Description)),
-		URL:    c.baseURL + "/browse/" + key,
-		Labels: issue.Fields.Labels,
+		Number:       number,
+		Title:        issue.Fields.Summary,
+		Body:         Body(jira.ADFToMarkdown(issue.Fields.Description)),
+		URL:          c.baseURL + "/browse/" + key,
+		Labels:       issue.Fields.Labels,
+		IssueType:    issueType,
+		CustomFields: issue.Fields.CustomFields,
 	}, nil
 }
 
