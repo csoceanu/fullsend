@@ -3607,6 +3607,28 @@ func TestGetWorkflowRunLogs_TraceError(t *testing.T) {
 	assert.Contains(t, logs, "test output")
 }
 
+// TestGetWorkflowRunLogs_TruncatedTraceIsMarked verifies that a trace over
+// the per-job limit is cut and says so, so callers can tell the snapshot is
+// incomplete.
+func TestGetWorkflowRunLogs_TruncatedTraceIsMarked(t *testing.T) {
+	client, mux := setupTest(t)
+	mux.HandleFunc("/api/v4/projects/o%2Fr/pipelines/30/jobs", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"id":1,"name":"build","status":"success"},{"id":2,"name":"test","status":"success"}]`)
+	})
+	mux.HandleFunc("/api/v4/projects/o%2Fr/jobs/1/trace", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", 10<<20+5)))
+	})
+	mux.HandleFunc("/api/v4/projects/o%2Fr/jobs/2/trace", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("small trace"))
+	})
+	logs, err := client.GetWorkflowRunLogs(context.Background(), "o", "r", 30)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(logs, "trace truncated at"), "only the oversized trace is marked")
+	assert.Contains(t, logs, "Job 1 (build): trace truncated at 10485760 bytes")
+	assert.Contains(t, logs, "small trace")
+}
+
 func TestGetWorkflowRunLogs_ListJobsError(t *testing.T) {
 	client, mux := setupTest(t)
 	mux.HandleFunc("/api/v4/projects/o%2Fr/pipelines/30/jobs", func(w http.ResponseWriter, _ *http.Request) {

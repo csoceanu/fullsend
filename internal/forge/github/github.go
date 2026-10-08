@@ -4161,16 +4161,23 @@ func (c *LiveClient) ListRepositoryArtifacts(ctx context.Context, owner, repo st
 	return artifacts, nil
 }
 
+// maxJobLogBytes caps how much of each job's log GetWorkflowRunLogs reads.
+const maxJobLogBytes = 1 << 20 // 1 MiB per job
+
 // GetWorkflowRunLogs downloads the logs for a workflow run.
 // It fetches the job list for the run and concatenates each job's log output.
+// When the output is not complete — more jobs than the single page of up to
+// 100 fetched, or a job log over maxJobLogBytes — a "[job list truncated:" or
+// "[log truncated:" note is embedded in the returned text.
 func (c *LiveClient) GetWorkflowRunLogs(ctx context.Context, owner, repo string, runID int) (string, error) {
 	// List jobs for this run.
-	resp, err := c.get(ctx, fmt.Sprintf("/repos/%s/%s/actions/runs/%d/jobs", owner, repo, runID))
+	resp, err := c.get(ctx, fmt.Sprintf("/repos/%s/%s/actions/runs/%d/jobs?per_page=100", owner, repo, runID))
 	if err != nil {
 		return "", fmt.Errorf("list jobs for run %d: %w", runID, err)
 	}
 	var jobsResult struct {
-		Jobs []struct {
+		TotalCount int `json:"total_count"`
+		Jobs       []struct {
 			ID         int    `json:"id"`
 			Name       string `json:"name"`
 			Status     string `json:"status"`
@@ -4215,13 +4222,22 @@ func (c *LiveClient) GetWorkflowRunLogs(ctx context.Context, owner, repo string,
 			fmt.Fprintf(&buf, "[logs unavailable: HTTP %d]\n\n", jobResp.StatusCode)
 			continue
 		}
-		logData, readErr := io.ReadAll(io.LimitReader(jobResp.Body, 1<<20)) // 1 MB per job
+		logData, readErr := io.ReadAll(io.LimitReader(jobResp.Body, maxJobLogBytes+1))
 		jobResp.Body.Close()
 		if readErr != nil {
 			fmt.Fprintf(&buf, "[failed to read logs: %v]\n\n", readErr)
 			continue
 		}
+		if len(logData) > maxJobLogBytes {
+			fmt.Fprintf(&buf, "%s\n[log truncated: job %d exceeds %d bytes]\n", string(logData[:maxJobLogBytes]), job.ID, maxJobLogBytes)
+			continue
+		}
 		fmt.Fprintf(&buf, "%s\n", string(logData))
+	}
+	// The jobs listing is a single page; say so when jobs were left out so
+	// callers do not mistake the snapshot for a complete one.
+	if jobsResult.TotalCount > len(jobsResult.Jobs) {
+		fmt.Fprintf(&buf, "[job list truncated: %d of %d jobs included]\n", len(jobsResult.Jobs), jobsResult.TotalCount)
 	}
 	return buf.String(), nil
 }
