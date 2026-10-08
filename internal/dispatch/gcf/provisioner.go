@@ -119,7 +119,7 @@ type Config struct {
 	WIFPoolName       string // default: "fullsend-pool"
 	WIFProvider       string // default: "github-oidc"
 	GitHubOrgs        []string
-	Repo              string // per-repo mode: "owner/repo"; empty = per-org
+	Repo              string // "owner/repo" to register/scope WIF for one repo; empty = no repo registration (Provision) or org-scoped WIF (inference ProvisionWIF)
 	FunctionSourceDir string // path to Cloud Function source directory
 
 	// AgentPEMs maps role → PEM private key data for all agent Apps.
