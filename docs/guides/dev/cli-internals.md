@@ -139,10 +139,11 @@ fullsend
 │   ├── context                              # Scan context files for prompt injection
 │   └── url                                  # Validate URLs against SSRF attacks
 ├── issues                                   # Read and write issue content across trackers
-│   ├── get                                  #   Read issue content (title, body, comments, labels)
+│   ├── get                                  #   Read issue content (title, type, body, comments, labels, Jira custom fields)
 │   │   ├── --tracker <tracker>              #     Tracker backend: github, gitlab, or jira
 │   │   ├── --project <project>              #     Project: owner/repo (GitHub/GitLab) or key (Jira)
-│   │   └── --number <int>                   #     Issue number
+│   │   ├── --number <int>                   #     Issue number
+│   │   └── --fields <ids>                   #     Jira custom field IDs (customfield_<digits>) to include under custom_fields (Jira only)
 │   └── post-comment                         #   Post or update a sticky comment on an issue
 │       ├── --tracker <tracker>              #     Tracker backend: github, gitlab, or jira
 │       ├── --project <project>              #     Project: owner/repo (GitHub/GitLab) or key (Jira)

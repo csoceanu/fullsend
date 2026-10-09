@@ -39,6 +39,43 @@ fullsend issues get \
   --jira-email you@example.com
 ```
 
+The output JSON has `number`, `title`, `body`, `url`, `labels`, and
+`comments`. For Jira, it also always includes `issue_type` (for example
+`"Bug"`, `"Story"`, or `"Task"`).
+
+To read Jira custom fields, pass their field IDs with `--fields`. The
+raw value of each requested field appears under `custom_fields`. A
+requested field that is unset or missing from the issue is `null`:
+
+```bash
+fullsend issues get \
+  --tracker jira \
+  --project PROJ \
+  --number 101 \
+  --fields customfield_10875,customfield_12345
+```
+
+```json
+{
+  "number": 101,
+  "title": "Widget is broken",
+  "body": "...",
+  "url": "https://myteam.atlassian.net/browse/PROJ-101",
+  "labels": [],
+  "issue_type": "Bug",
+  "custom_fields": {
+    "customfield_10875": "https://github.com/acme/widgets/pull/7",
+    "customfield_12345": null
+  },
+  "comments": []
+}
+```
+
+Values keep the shape Jira returns, so select-list or user fields are
+objects, not strings. GitHub and GitLab output has no `issue_type` or
+`custom_fields`. For those trackers, `--fields` prints a warning and is
+otherwise ignored.
+
 ### Flags
 
 | Flag | Required | Description |
@@ -49,6 +86,7 @@ fullsend issues get \
 | `--token` | No | API token (default: env var per tracker) |
 | `--jira-url` | Jira only | Jira instance URL (default: `$JIRA_BASE_URL`) |
 | `--jira-email` | Jira only | Jira user email for auth (default: `$JIRA_USER_EMAIL`) |
+| `--fields` | Jira only | Comma-separated Jira custom field IDs (`customfield_<digits>`) to include under `custom_fields`. Repeatable. |
 | `--fullsend-dir` | No | Path to `.fullsend` config directory (sources defaults from its `config.yaml` when flags are omitted) |
 
 ## `fullsend issues post-comment`

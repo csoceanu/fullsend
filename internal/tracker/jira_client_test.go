@@ -75,6 +75,45 @@ func TestJiraClient_GetIssue(t *testing.T) {
 	}
 }
 
+func TestJiraClient_GetIssue_IssueTypeAndCustomFields(t *testing.T) {
+	custom := map[string]json.RawMessage{
+		"customfield_10875": json.RawMessage(`"https://github.com/acme/widgets/pull/7"`),
+	}
+	fc := &FakeJiraClient{
+		Issues: map[string]*jira.Issue{
+			"PROJ-7": {
+				Key: "PROJ-7",
+				Fields: jira.IssueFields{
+					Summary:      "Typed",
+					IssueType:    &jira.IssueType{ID: "10001", Name: "Story"},
+					CustomFields: custom,
+				},
+			},
+			"PROJ-8": {Key: "PROJ-8", Fields: jira.IssueFields{Summary: "Untyped"}},
+		},
+	}
+	c := newTestJiraClient(t, fc, "https://acme.atlassian.net")
+
+	issue, err := c.GetIssue(context.Background(), "PROJ", 7)
+	if err != nil {
+		t.Fatalf("GetIssue returned error: %v", err)
+	}
+	if issue.IssueType != "Story" {
+		t.Errorf("issue.IssueType = %q, want %q", issue.IssueType, "Story")
+	}
+	if got := string(issue.CustomFields["customfield_10875"]); got != `"https://github.com/acme/widgets/pull/7"` {
+		t.Errorf("issue.CustomFields[customfield_10875] = %s, want the PR URL", got)
+	}
+
+	issue, err = c.GetIssue(context.Background(), "PROJ", 8)
+	if err != nil {
+		t.Fatalf("GetIssue returned error: %v", err)
+	}
+	if issue.IssueType != "" || issue.CustomFields != nil {
+		t.Errorf("issue without type/custom fields: IssueType = %q, CustomFields = %v; want empty", issue.IssueType, issue.CustomFields)
+	}
+}
+
 func TestJiraClient_GetIssue_NotFound(t *testing.T) {
 	fc := &FakeJiraClient{Issues: map[string]*jira.Issue{}}
 	c := newTestJiraClient(t, fc, "https://acme.atlassian.net")

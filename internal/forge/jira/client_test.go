@@ -732,6 +732,61 @@ func TestGetIssue(t *testing.T) {
 	assert.Equal(t, "new", issue.Fields.Status.StatusCategory.Key)
 }
 
+func TestGetIssue_IssueTypeAndCustomFields(t *testing.T) {
+	t.Parallel()
+	client, mux := setupTest(t)
+	ctx := context.Background()
+
+	mux.HandleFunc("/rest/api/3/issue/PROJ-43", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"id":  "10043",
+			"key": "PROJ-43",
+			"fields": map[string]any{
+				"summary":           "Typed issue",
+				"issuetype":         map[string]any{"id": "10001", "name": "Bug", "subtask": false},
+				"customfield_10875": "https://github.com/acme/widgets/pull/7",
+				"customfield_12345": map[string]any{"value": "High"},
+				"customfield_99999": nil,
+				"priority":          map[string]any{"name": "Major"},
+			},
+		})
+	})
+
+	issue, err := client.GetIssue(ctx, "PROJ-43")
+	require.NoError(t, err)
+	assert.Equal(t, "Typed issue", issue.Fields.Summary)
+	require.NotNil(t, issue.Fields.IssueType)
+	assert.Equal(t, "Bug", issue.Fields.IssueType.Name)
+	assert.Equal(t, "10001", issue.Fields.IssueType.ID)
+	assert.Equal(t, map[string]json.RawMessage{
+		"customfield_10875": json.RawMessage(`"https://github.com/acme/widgets/pull/7"`),
+		"customfield_12345": json.RawMessage(`{"value":"High"}`),
+		"customfield_99999": json.RawMessage(`null`),
+	}, issue.Fields.CustomFields, "only customfield_* keys are collected, values kept verbatim")
+}
+
+func TestIssueFields_UnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no custom fields leaves map nil", func(t *testing.T) {
+		var f IssueFields
+		require.NoError(t, json.Unmarshal([]byte(`{"summary":"s","labels":["a"]}`), &f))
+		assert.Equal(t, "s", f.Summary)
+		assert.Nil(t, f.IssueType)
+		assert.Nil(t, f.CustomFields)
+	})
+
+	t.Run("invalid standard field type", func(t *testing.T) {
+		var f IssueFields
+		assert.Error(t, json.Unmarshal([]byte(`{"summary":123}`), &f))
+	})
+
+	t.Run("non-object", func(t *testing.T) {
+		var f IssueFields
+		assert.Error(t, json.Unmarshal([]byte(`["x"]`), &f))
+	})
+}
+
 func TestGetIssue_NotFound(t *testing.T) {
 	t.Parallel()
 	client, mux := setupTest(t)

@@ -46,12 +46,17 @@ pointing at the directory containing it.`,
 
 // issueGetResult is the JSON output of "fullsend issues get".
 type issueGetResult struct {
-	Number   int                     `json:"number"`
-	Title    string                  `json:"title"`
-	Body     string                  `json:"body"`
-	URL      string                  `json:"url"`
-	Labels   []string                `json:"labels"`
-	Comments []issueCommentGetResult `json:"comments"`
+	Number    int      `json:"number"`
+	Title     string   `json:"title"`
+	Body      string   `json:"body"`
+	URL       string   `json:"url"`
+	Labels    []string `json:"labels"`
+	IssueType string   `json:"issue_type,omitempty"`
+	// CustomFields holds the --fields requested by the caller (Jira only).
+	// Every requested ID is present; a field the issue doesn't have, or
+	// whose value is unset, is emitted as null.
+	CustomFields map[string]json.RawMessage `json:"custom_fields,omitempty"`
+	Comments     []issueCommentGetResult    `json:"comments"`
 }
 
 type issueCommentGetResult struct {
@@ -71,11 +76,13 @@ type issuesGetConfig struct {
 	jiraURL     string
 	jiraEmail   string
 	fullsendDir string
+	fields      []string
 
 	// Test overrides — when non-nil, used instead of creating a real
 	// tracker client. Not set by CLI flag parsing.
 	testClient       tracker.Client
 	testWriter       io.Writer
+	testErrWriter    io.Writer
 	testConfigReader config.PerRepoConfigReader
 }
 
@@ -90,7 +97,13 @@ specified tracker (GitHub, GitLab, or Jira) and prints them as JSON.
 
 For GitHub/GitLab, --project is "owner/repo". For Jira, --project is
 the Jira project key (e.g. "PROJ") and the issue number maps to
-PROJ-<number>.`,
+PROJ-<number>.
+
+For Jira, the output always includes "issue_type" (e.g. "Bug",
+"Story"). Pass --fields with comma-separated Jira custom field IDs
+(e.g. "customfield_10875") to include those fields' raw values under
+"custom_fields"; a requested field the issue does not have is emitted
+as null. --fields is ignored, with a warning, for GitHub and GitLab.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runIssuesGet(cmd.Context(), &cfg)
 		},
@@ -103,6 +116,7 @@ PROJ-<number>.`,
 	cmd.Flags().StringVar(&cfg.jiraURL, "jira-url", "", "Jira instance URL (default: $JIRA_BASE_URL)")
 	cmd.Flags().StringVar(&cfg.jiraEmail, "jira-email", "", "Jira user email for Basic auth (default: $JIRA_USER_EMAIL)")
 	cmd.Flags().StringVar(&cfg.fullsendDir, "fullsend-dir", "", "path to .fullsend config directory (sources a default --tracker from its config.yaml when --tracker is omitted)")
+	cmd.Flags().StringSliceVar(&cfg.fields, "fields", nil, "comma-separated Jira custom field IDs to include under custom_fields (e.g. customfield_10875; Jira only)")
 	_ = cmd.MarkFlagRequired("project")
 	_ = cmd.MarkFlagRequired("number")
 
@@ -112,6 +126,10 @@ PROJ-<number>.`,
 func runIssuesGet(ctx context.Context, cfg *issuesGetConfig) error {
 	if cfg.number <= 0 {
 		return fmt.Errorf("--number must be a positive integer, got %d", cfg.number)
+	}
+	fields, err := parseCustomFieldIDs(cfg.fields)
+	if err != nil {
+		return err
 	}
 
 	tc := cfg.testClient
@@ -141,12 +159,28 @@ func runIssuesGet(ctx context.Context, cfg *issuesGetConfig) error {
 		labels = []string{}
 	}
 	result := issueGetResult{
-		Number:   issue.Number,
-		Title:    issue.Title,
-		Body:     string(issue.Body),
-		URL:      issue.URL,
-		Labels:   labels,
-		Comments: make([]issueCommentGetResult, len(comments)),
+		Number:    issue.Number,
+		Title:     issue.Title,
+		Body:      string(issue.Body),
+		URL:       issue.URL,
+		Labels:    labels,
+		IssueType: issue.IssueType,
+		Comments:  make([]issueCommentGetResult, len(comments)),
+	}
+	if len(fields) > 0 {
+		if _, isJira := tc.(*tracker.JiraClient); isJira {
+			result.CustomFields = make(map[string]json.RawMessage, len(fields))
+			for _, id := range fields {
+				// A missing key yields a nil RawMessage, which encodes as null.
+				result.CustomFields[id] = issue.CustomFields[id]
+			}
+		} else {
+			ew := cfg.testErrWriter
+			if ew == nil {
+				ew = os.Stderr
+			}
+			fmt.Fprintln(ew, "Warning: --fields is only supported for --tracker jira; ignoring")
+		}
 	}
 	for i, c := range comments {
 		result.Comments[i] = issueCommentGetResult{
@@ -479,6 +513,28 @@ func postTrackerStickyComment(ctx context.Context, tc tracker.Client, project st
 	}
 	printer.StepDone("Comment created")
 	return created.HTMLURL, nil
+}
+
+// parseCustomFieldIDs trims, de-duplicates, and validates the --fields
+// values. Only Jira custom field IDs ("customfield_<digits>") are
+// accepted: standard fields already have dedicated output keys, and a
+// typo would otherwise silently come back as null.
+func parseCustomFieldIDs(raw []string) ([]string, error) {
+	var ids []string
+	for _, f := range raw {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		digits, ok := strings.CutPrefix(f, "customfield_")
+		if !ok || digits == "" || strings.Trim(digits, "0123456789") != "" {
+			return nil, fmt.Errorf("invalid --fields value %q: expected a Jira custom field ID like customfield_10875", f)
+		}
+		if !slices.Contains(ids, f) {
+			ids = append(ids, f)
+		}
+	}
+	return ids, nil
 }
 
 // resolveTracker returns trackerFlag if it is non-empty (the --tracker

@@ -334,6 +334,108 @@ func TestRunIssuesGet_NilLabelsOutputAsEmptyArray(t *testing.T) {
 	assert.Equal(t, "[]", string(raw["labels"]), "nil labels should serialize as empty JSON array, not null")
 }
 
+// newJiraTrackerWithTypedIssue returns a Jira-backed tracker.Client with
+// PROJ-5, a Bug carrying one string and one object custom field.
+func newJiraTrackerWithTypedIssue(t *testing.T) tracker.Client {
+	t.Helper()
+	tc, fc, err := tracker.NewFakeJiraClientWithFake("https://acme.atlassian.net")
+	require.NoError(t, err)
+	fc.Issues = map[string]*jira.Issue{
+		"PROJ-5": {
+			Key: "PROJ-5",
+			Fields: jira.IssueFields{
+				Summary:   "Typed issue",
+				IssueType: &jira.IssueType{ID: "10001", Name: "Bug"},
+				CustomFields: map[string]json.RawMessage{
+					"customfield_10875": json.RawMessage(`"https://github.com/acme/widgets/pull/7"`),
+					"customfield_12345": json.RawMessage(`{"value":"High","id":"3"}`),
+					"customfield_20000": json.RawMessage(`null`),
+				},
+			},
+		},
+	}
+	return tc
+}
+
+func TestRunIssuesGet_JiraIssueTypeWithoutFields(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &issuesGetConfig{
+		project:    "PROJ",
+		number:     5,
+		testClient: newJiraTrackerWithTypedIssue(t),
+		testWriter: &buf,
+	}
+	require.NoError(t, runIssuesGet(context.Background(), cfg))
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &raw))
+	assert.JSONEq(t, `"Bug"`, string(raw["issue_type"]))
+	assert.NotContains(t, raw, "custom_fields", "custom_fields is opt-in via --fields")
+}
+
+func TestRunIssuesGet_JiraCustomFields(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &issuesGetConfig{
+		project:    "PROJ",
+		number:     5,
+		fields:     []string{" customfield_10875", "customfield_12345", "customfield_10875", "", "customfield_20000", "customfield_30000"},
+		testClient: newJiraTrackerWithTypedIssue(t),
+		testWriter: &buf,
+	}
+	require.NoError(t, runIssuesGet(context.Background(), cfg))
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &raw))
+	assert.JSONEq(t, `{
+		"customfield_10875": "https://github.com/acme/widgets/pull/7",
+		"customfield_12345": {"value": "High", "id": "3"},
+		"customfield_20000": null,
+		"customfield_30000": null
+	}`, string(raw["custom_fields"]), "only requested fields; unset or absent ones are null")
+}
+
+func TestRunIssuesGet_FieldsIgnoredForNonJira(t *testing.T) {
+	var buf, errBuf bytes.Buffer
+	cfg := &issuesGetConfig{
+		project:       "acme/widgets",
+		number:        1,
+		fields:        []string{"customfield_10875"},
+		testClient:    newFakeTrackerWithIssue(t, "acme/widgets", 1),
+		testWriter:    &buf,
+		testErrWriter: &errBuf,
+	}
+	require.NoError(t, runIssuesGet(context.Background(), cfg))
+
+	assert.Contains(t, errBuf.String(), "--fields is only supported for --tracker jira")
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &raw))
+	assert.NotContains(t, raw, "custom_fields")
+	assert.NotContains(t, raw, "issue_type", "GitHub output is unchanged")
+}
+
+func TestRunIssuesGet_InvalidFields(t *testing.T) {
+	for _, f := range []string{"priority", "customfield_", "customfield_12a", "customfield_10875,x"} {
+		cfg := &issuesGetConfig{
+			project:    "PROJ",
+			number:     5,
+			fields:     []string{f},
+			testClient: newJiraTrackerWithTypedIssue(t),
+			testWriter: io.Discard,
+		}
+		err := runIssuesGet(context.Background(), cfg)
+		require.Error(t, err, f)
+		assert.Contains(t, err.Error(), "invalid --fields value")
+	}
+}
+
+func TestIssuesGetCmd_FieldsFlagParsesCommaList(t *testing.T) {
+	cmd := newIssuesGetCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--fields", "customfield_1,customfield_2", "--fields", "customfield_3"}))
+	got, err := cmd.Flags().GetStringSlice("fields")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"customfield_1", "customfield_2", "customfield_3"}, got)
+}
+
 func TestRunIssuesGet_IssueNotFound(t *testing.T) {
 	fc := forge.NewFakeClient()
 	tc := tracker.NewForgeClient(fc)
