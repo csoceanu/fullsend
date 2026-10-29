@@ -320,6 +320,19 @@ func printStatusTable(cmd *cobra.Command, result *repos.StatusResult) {
 		}
 	}
 
+	// The webhook fast path's reasons, including an informational
+	// deferral that adds no drift. Names and IDs only, never values.
+	for _, s := range result.Repos {
+		w := s.GitLabWebhook
+		if w == nil || w.State == repos.GitLabWebhookStateReady {
+			continue
+		}
+		fmt.Fprintf(out, "\n%s GitLab webhook fast path: %s\n", s.Owner+"/"+s.Repo, w.State)
+		for _, r := range w.Reasons {
+			fmt.Fprintf(out, "  %s\n", r)
+		}
+	}
+
 	for _, w := range result.Warnings {
 		fmt.Fprintf(out, "WARNING: %s\n", w)
 	}
@@ -1057,7 +1070,7 @@ func runReposInstall(ctx context.Context, opts *reposInstallConfig) error {
 					continue
 				}
 
-				schedErr := setupGitLabPipelineSchedules(ctx, fc.Client, printer, r.Owner, r.Repo, targetRepo.DefaultBranch, r.GitLabTypedDispatch)
+				schedErr := setupGitLabPipelineSchedules(ctx, fc.Client, printer, r.Owner, r.Repo, targetRepo.DefaultBranch)
 				if schedErr != nil {
 					printer.StepWarn(fmt.Sprintf("[%s] Pipeline schedule setup failed: %v", repoFullName, schedErr))
 					r.Error = schedErr
@@ -1076,8 +1089,7 @@ func runReposInstall(ctx context.Context, opts *reposInstallConfig) error {
 	// GitLab poll-state provisioning for already-enrolled repos.
 	// Fresh installs are handled above via repos.Install (Step 5b);
 	// converged and already-current repos still need
-	// FULLSEND_DISPATCH_SECRET and the two poll-state branches, with
-	// any legacy CI/CD variables migrated into signed documents. This
+	// FULLSEND_DISPATCH_SECRET and the two poll-state branches. This
 	// runs with the operator's Maintainer-level client and never
 	// touches the bot PAT, so it is safe on live repos.
 	var pollStateFail int

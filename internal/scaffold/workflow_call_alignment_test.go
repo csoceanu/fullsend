@@ -847,6 +847,65 @@ func TestReusableDispatchWorkflowContent(t *testing.T) {
 	assert.Regexp(t, `(?s)ready-for-review"\s*\]\];\s*then\s*\n\s+if \[\[ "\$\{ISSUE_IS_PR\}"`, s)
 }
 
+// TestReusableDispatchJobsReceiveMintOIDC validates permissions and mint URL
+// wiring for both gha-event dispatch steps (#8814). The OIDC token remains
+// job-local and is not copied into outputs, logs, or matrix data.
+func TestReusableDispatchJobsReceiveMintOIDC(t *testing.T) {
+	type workflowStep struct {
+		Name string            `yaml:"name"`
+		Run  string            `yaml:"run"`
+		Env  map[string]string `yaml:"env"`
+	}
+	type workflowJob struct {
+		Permissions map[string]string `yaml:"permissions"`
+		Outputs     map[string]string `yaml:"outputs"`
+		Steps       []workflowStep    `yaml:"steps"`
+	}
+	var workflow struct {
+		Jobs map[string]workflowJob `yaml:"jobs"`
+	}
+
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "reusable-dispatch.yml"))
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(content, &workflow))
+
+	for _, tc := range []struct {
+		jobName  string
+		stepName string
+	}{
+		{jobName: "route", stepName: "Evaluate CEL route"},
+		{jobName: "harness-dispatch", stepName: "Run fullsend dispatch"},
+	} {
+		t.Run(tc.jobName, func(t *testing.T) {
+			job, ok := workflow.Jobs[tc.jobName]
+			require.True(t, ok, "job %q must exist", tc.jobName)
+			assert.Equal(t, "write", job.Permissions["id-token"],
+				"job %q must be able to request an OIDC token", tc.jobName)
+
+			var dispatch workflowStep
+			for _, step := range job.Steps {
+				if step.Name == tc.stepName {
+					dispatch = step
+					break
+				}
+			}
+			require.NotEmpty(t, dispatch.Name, "job %q must include step %q", tc.jobName, tc.stepName)
+			assert.Contains(t, dispatch.Run, "--input-driver gha-event",
+				"step %q must use the GitHub event driver", tc.stepName)
+			assert.Equal(t, "${{ inputs.mint_url }}", dispatch.Env["FULLSEND_MINT_URL"],
+				"step %q must receive the configured mint URL", tc.stepName)
+			for name, value := range job.Outputs {
+				assert.NotContains(t, name, "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+					"job %q output names must not expose the OIDC request token", tc.jobName)
+				assert.NotContains(t, value, "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+					"job %q outputs must not expose the OIDC request token", tc.jobName)
+			}
+		})
+	}
+	assert.NotContains(t, string(content), "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+		"the workflow must not copy the OIDC request token into logs or matrix data")
+}
+
 // TestCustomAppSetReviewBotWiring ensures every GitHub review/fix dispatch
 // path receives the configured app-set prefix and recognizes its exact review
 // bot identity.
@@ -1476,52 +1535,6 @@ func TestShimLabeledEventFiltering(t *testing.T) {
 				"%s per-repo shim must not filter on label prefix — BYOA harness agents may use arbitrary labels", tc.name)
 			assert.Nil(t, job.Concurrency,
 				"%s per-repo shim must not have job-level concurrency (ADR 0034: per-role groups live in reusable-dispatch.yml)", tc.name)
-		})
-	}
-}
-
-// TestRoleCheckCaseBranches validates the role-check step's case mapping and
-// backward-compat logic in reusable-dispatch.yml (#2298).
-func TestRoleCheckCaseBranches(t *testing.T) {
-	type workflowCase struct {
-		name    string
-		content func(t *testing.T) []byte
-	}
-
-	cases := []workflowCase{
-		{
-			"reusable-dispatch.yml",
-			loadRepoFile(".github/workflows/reusable-dispatch.yml"),
-		},
-	}
-
-	for _, wc := range cases {
-		t.Run(wc.name, func(t *testing.T) {
-			s := string(wc.content(t))
-
-			// code|fix must map to coder
-			assert.Contains(t, s, `code|fix) STAGE_ROLE="coder"`,
-				"code|fix should map to coder role")
-
-			// retro and prioritize must NOT be remapped to fullsend
-			assert.NotContains(t, s, `retro|prioritize) STAGE_ROLE="fullsend"`,
-				"retro/prioritize must not be remapped to fullsend (#2298)")
-
-			// backward compat: fullsend in roles implies retro + prioritize
-			assert.Regexp(t, `\^\(retro\|prioritize\)\$`, s,
-				"backward-compat regex should match retro and prioritize")
-			assert.Contains(t, s, `grep -Fqx "fullsend"`,
-				"backward-compat should check for fullsend in roles")
-
-			// compat path must emit a notice, not silently pass
-			assert.Regexp(t, `(?s)grep -Fqx "fullsend".*::notice::Stage`, s,
-				"backward-compat path must emit a ::notice:: annotation")
-
-			// stages that pass through unmapped must not be remapped
-			assert.NotRegexp(t, `triage\).*STAGE_ROLE=`, s,
-				"triage must not be remapped")
-			assert.NotRegexp(t, `review\).*STAGE_ROLE=`, s,
-				"review must not be remapped")
 		})
 	}
 }

@@ -26,15 +26,21 @@ Maintainers carry additional responsibilities:
 
 ## Eligibility
 
-You should have a demonstrated track record of contributions to this
-project — authored PRs that were reviewed and merged, substantive PR
-reviews, or both. Drive-by fixes are appreciated but do not on their
-own establish the familiarity needed for a maintainer role.
+You should have a demonstrated track record of contributions — merged
+PRs, substantive PR reviews, or both — in
+[this repository](https://github.com/fullsend-ai/fullsend) or other
+public repositories of the
+[fullsend-ai](https://github.com/fullsend-ai) organization. At least
+one merged change or substantive review must be in this repository.
+Drive-by fixes are appreciated but do not on their own establish the
+familiarity needed for a maintainer role.
 
 ## Process
 
-1. **File an issue** titled "Maintainer nomination: \<your GitHub
-   handle\>". In the issue, link to merged PRs you have authored or
+1. **File a nomination issue** using the
+   [Maintainer Nomination](https://github.com/fullsend-ai/org/issues/new?template=maintainer-request.yml)
+   template in [fullsend-ai/org](https://github.com/fullsend-ai/org).
+   In the issue, link to merged PRs you have authored or
    substantive reviews you have provided that demonstrate your
    familiarity with the project.
 2. **Current maintainers discuss.** The maintainers will review your

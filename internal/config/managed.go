@@ -314,6 +314,11 @@ type DeclaredInfrastructure struct {
 	InferenceProject     string
 	InferenceRegion      string
 	InferenceWIFProvider string
+	// InferenceWIFAudience and InferenceServiceAccount are the GitLab
+	// vertex-wif options for an existing WIF provider: the agent job's ID
+	// token audience and the service account it impersonates.
+	InferenceWIFAudience    string
+	InferenceServiceAccount string
 }
 
 // DeclaredInfrastructureValues returns the mint URL and Vertex inference
@@ -335,10 +340,12 @@ func DeclaredInfrastructureValues(overlay PerRepoConfigWriter, baseYAML []byte) 
 		layered.parent = &base
 	}
 	return DeclaredInfrastructure{
-		MintURL:              layered.ConfigMintURL(),
-		InferenceProject:     layered.ConfigInferenceProject(),
-		InferenceRegion:      layered.ConfigInferenceRegion(),
-		InferenceWIFProvider: layered.ConfigInferenceWIFProvider(),
+		MintURL:                 layered.ConfigMintURL(),
+		InferenceProject:        layered.ConfigInferenceProject(),
+		InferenceRegion:         layered.ConfigInferenceRegion(),
+		InferenceWIFProvider:    layered.ConfigInferenceWIFProvider(),
+		InferenceWIFAudience:    layered.ConfigInferenceWIFAudience(),
+		InferenceServiceAccount: layered.ConfigInferenceServiceAccount(),
 	}, nil
 }
 
@@ -488,6 +495,12 @@ func applyManagedLayer(out, child *perRepoConfig) {
 		}
 		if child.Inference.WIFProvider != "" {
 			out.Inference.WIFProvider = child.Inference.WIFProvider
+		}
+		if child.Inference.WIFAudience != "" {
+			out.Inference.WIFAudience = child.Inference.WIFAudience
+		}
+		if child.Inference.ServiceAccount != "" {
+			out.Inference.ServiceAccount = child.Inference.ServiceAccount
 		}
 		if child.Inference.OpenAI != nil {
 			if out.Inference.OpenAI == nil {

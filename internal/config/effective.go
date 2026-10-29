@@ -52,10 +52,12 @@ func EffectiveYAML(r PerRepoConfigReader) ([]byte, error) {
 	}
 	inference := map[string]any{}
 	for key, val := range map[string]string{
-		"provider":     r.ConfigInferenceProvider(),
-		"project":      r.ConfigInferenceProject(),
-		"region":       r.ConfigInferenceRegion(),
-		"wif_provider": r.ConfigInferenceWIFProvider(),
+		"provider":        r.ConfigInferenceProvider(),
+		"project":         r.ConfigInferenceProject(),
+		"region":          r.ConfigInferenceRegion(),
+		"wif_provider":    r.ConfigInferenceWIFProvider(),
+		"wif_audience":    r.ConfigInferenceWIFAudience(),
+		"service_account": r.ConfigInferenceServiceAccount(),
 	} {
 		if val != "" {
 			inference[key] = val

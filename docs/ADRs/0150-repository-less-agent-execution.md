@@ -47,6 +47,10 @@ that execution path part of this change. See
 [agent-architecture.md](../problems/agent-architecture.md) for the broader
 problems.
 
+This ADR aims to let configured agents run without a target code repository
+while keeping configuration, execution, and target context separate and
+preserving repository-targeted runs.
+
 ## Options
 
 ### Infer repository-less mode when no path is supplied
@@ -77,6 +81,10 @@ Those responsibilities should remain shared while target-specific behavior
 becomes explicit.
 
 ## Decision
+
+We adopt an explicit repository-less run mode to let harnesses execute without
+a target code repository while preserving existing repository-targeted
+behavior.
 
 `fullsend run` requires exactly one of:
 

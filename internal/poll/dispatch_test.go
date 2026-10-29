@@ -118,10 +118,10 @@ func TestDispatch_CreatesAPIpipelineAndAppendsRecord(t *testing.T) {
 // breaking-config bug where dispatch() called CreatePipelineWithInputs
 // unconditionally regardless of the target repository's own installed
 // contract. A poller binary is not upgraded in lockstep with every
-// repository's scaffold migration (the CLI installer this job's wrapper
-// script builds fetches and rebuilds a non-pinned ref on every poll run),
-// so dispatch() must read the committed wrapper and select the transport
-// that repository actually declares.
+// repository's scaffold (the CLI installer this job's wrapper script
+// builds fetches and rebuilds a non-pinned ref on every poll run), so
+// dispatch() must read the committed wrapper and refuse a repository that
+// does not declare the typed contract.
 func TestDispatch_SelectsTransportFromTargetRepositoryContract(t *testing.T) {
 	event := RoutableEvent{
 		Type:      "issue_note",
@@ -141,32 +141,35 @@ func TestDispatch_SelectsTransportFromTargetRepositoryContract(t *testing.T) {
 		}
 	})
 
-	t.Run("missing wrapper falls back to variables-based pipeline", func(t *testing.T) {
-		mc := newMockClient()
-		mc.wrapperNotFound = true // simulates a legacy, not-yet-migrated installation
-		p := newTestPoller(mc, Options{})
-		if err := p.dispatch(context.Background(), "owner", "repo", "triage", event); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(mc.pipelineCalls) != 1 || mc.pipelineCalls[0].ViaInputs {
-			t.Fatalf("expected one CreatePipeline (variables) call, got %+v", mc.pipelineCalls)
-		}
-		if mc.pipelineCalls[0].Variables["STAGE"] != "triage" {
-			t.Errorf("STAGE variable: got %q, want triage", mc.pipelineCalls[0].Variables["STAGE"])
-		}
-	})
-
-	t.Run("incomplete wrapper falls back to variables-based pipeline", func(t *testing.T) {
-		mc := newMockClient()
-		mc.wrapperContent = []byte("spec:\n  inputs:\n    stage: {}\n---\n{}\n") // declares some, not all, inputs
-		p := newTestPoller(mc, Options{})
-		if err := p.dispatch(context.Background(), "owner", "repo", "triage", event); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(mc.pipelineCalls) != 1 || mc.pipelineCalls[0].ViaInputs {
-			t.Fatalf("expected one CreatePipeline (variables) call, got %+v", mc.pipelineCalls)
-		}
-	})
+	// The former variable-based dispatch path has been removed: a
+	// repository without the full typed contract is refused, and no
+	// pipeline is ever created with user-defined variables.
+	for name, setup := range map[string]func(*mockClient){
+		"missing wrapper is refused": func(mc *mockClient) { mc.wrapperNotFound = true },
+		"legacy wrapper is refused": func(mc *mockClient) {
+			mc.wrapperContent = []byte("include:\n  - local: .gitlab/ci/fullsend-agent.yml\n")
+		},
+		"incomplete wrapper is refused": func(mc *mockClient) { mc.wrapperContent = []byte("spec:\n  inputs:\n    stage: {}\n---\n{}\n") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			mc := newMockClient()
+			setup(mc)
+			p := newTestPoller(mc, Options{})
+			err := p.dispatch(context.Background(), "owner", "repo", "triage", event)
+			if err == nil || !strings.Contains(err.Error(), "legacy pipeline-variable dispatch path is no longer supported") {
+				t.Fatalf("expected a typed-contract refusal, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "fullsend_ref to "+firstTypedDispatchRelease) {
+				t.Fatalf("expected the refusal to name fullsend_ref and the minimum release, got %v", err)
+			}
+			if len(mc.pipelineCalls) != 0 {
+				t.Fatalf("expected no pipeline call, got %+v", mc.pipelineCalls)
+			}
+			if len(p.dispatches) != 0 {
+				t.Fatalf("expected no recorded dispatch, got %+v", p.dispatches)
+			}
+		})
+	}
 
 	t.Run("wrapper read error propagates without dispatching", func(t *testing.T) {
 		mc := newMockClient()
@@ -187,8 +190,8 @@ func TestDispatch_SelectsTransportFromTargetRepositoryContract(t *testing.T) {
 	// CreatePipelineWithInputs targeted p.opts.PipelineRef. When the
 	// dispatch ref's wrapper contract differs from the default branch's
 	// (e.g. a legacy release branch still pinned to variable-based
-	// dispatch while main has migrated to typed inputs, or vice versa),
-	// the poller must select the transport the *dispatch ref* actually
+	// dispatch while main has moved to typed inputs, or vice versa), the
+	// poller must check the contract the *dispatch ref* actually
 	// declares, not the default branch's.
 	t.Run("reads the wrapper at the dispatch ref, not the default branch", func(t *testing.T) {
 		mc := newMockClient()
@@ -201,18 +204,16 @@ func TestDispatch_SelectsTransportFromTargetRepositoryContract(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy wrapper at the dispatch ref falls back to variables even when default branch is typed", func(t *testing.T) {
+	t.Run("legacy wrapper at the dispatch ref is refused even when default branch is typed", func(t *testing.T) {
 		mc := newMockClient() // default-branch wrapper fixture declares the full typed contract
 		mc.wrapperNotFound = true
 		p := newTestPoller(mc, Options{PipelineRef: "legacy-release"})
-		if err := p.dispatch(context.Background(), "owner", "repo", "triage", event); err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		err := p.dispatch(context.Background(), "owner", "repo", "triage", event)
+		if err == nil || !strings.Contains(err.Error(), `at ref "legacy-release"`) {
+			t.Fatalf("expected a typed-contract refusal naming the dispatch ref, got %v", err)
 		}
-		if len(mc.pipelineCalls) != 1 || mc.pipelineCalls[0].ViaInputs {
-			t.Fatalf("expected one CreatePipeline (variables) call reflecting the dispatch ref's legacy contract, got %+v", mc.pipelineCalls)
-		}
-		if mc.pipelineCalls[0].Ref != "legacy-release" {
-			t.Errorf("pipeline ref: got %q, want legacy-release", mc.pipelineCalls[0].Ref)
+		if len(mc.pipelineCalls) != 0 {
+			t.Fatalf("expected no pipeline call, got %+v", mc.pipelineCalls)
 		}
 	})
 }
@@ -1464,6 +1465,9 @@ func TestDispatch_ChildPipelineRoute(t *testing.T) {
 		err := p.dispatch(context.Background(), "owner", "repo", "triage", event)
 		if err == nil || !strings.Contains(err.Error(), "requires the typed pipeline-input contract") {
 			t.Fatalf("expected a typed-contract error, got %v", err)
+		}
+		if len(p.dispatches) != 0 {
+			t.Fatalf("expected no recorded dispatch, got %+v", p.dispatches)
 		}
 		if len(mc.pipelineCalls) != 0 {
 			t.Fatalf("expected no pipeline call, got %+v", mc.pipelineCalls)

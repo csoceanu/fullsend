@@ -50,7 +50,7 @@ Next:
   2. Test locally, printing the result instead of commenting:
        POST_LINT_DOCS_DRY_RUN=1 fullsend run lint-docs \
          --target-repo . --env-file .env.local
-     .env.local needs GITHUB_ISSUE_URL, ISSUE_NUMBER, REPO_FULL_NAME,
+     .env.local needs FULLSEND_WORK_ITEM_URL, ISSUE_NUMBER, REPO_FULL_NAME,
      GH_TOKEN, ANTHROPIC_VERTEX_PROJECT_ID, CLOUD_ML_REGION, and
      GOOGLE_APPLICATION_CREDENTIALS pointing at a GCP credentials file;
      the run stops before it starts without them.
@@ -377,7 +377,12 @@ fullsend agent list
 |------|---------|-------------|
 | `--fullsend-dir` | `.fullsend` | Path to the `.fullsend` configuration directory |
 
-Read-only. Displays a table with `NAME` and `SOURCE` columns. For URL agents, the `#sha256=...` integrity hash suffix is stripped from the displayed source for readability. Disabled agents (`enabled: false`) are included in the listing.
+Read-only. Displays a table with `NAME` and `SOURCE` columns. For URL agents,
+the `#sha256=...` integrity hash suffix is stripped from the displayed source
+for readability. Disabled agents (`enabled: false`) are included in the listing.
+A built-in agent tuned by an entry without `source:` shows `(built-in)`. An
+entry's settings follow in brackets, for example `[model=sonnet effort=high]`;
+an entry with an `agents[].trigger` shows `trigger` there.
 
 Example output:
 ```

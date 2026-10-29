@@ -79,6 +79,14 @@ func (d *perRepoDefaults) ConfigInferenceRegion() string { return DefaultPerRepo
 // must be provided by the installer or existing secret).
 func (d *perRepoDefaults) ConfigInferenceWIFProvider() string { return "" }
 
+// ConfigInferenceWIFAudience returns the default ID token audience override
+// (empty — the GitLab agent job keeps aud "fullsend").
+func (d *perRepoDefaults) ConfigInferenceWIFAudience() string { return "" }
+
+// ConfigInferenceServiceAccount returns the default service account to
+// impersonate (empty — direct federated identity, no impersonation).
+func (d *perRepoDefaults) ConfigInferenceServiceAccount() string { return "" }
+
 // ConfigKeepHistory returns the default keep-history state (true —
 // sticky comment updates append previous content as "Previous run"
 // blocks, preserving the pre-existing behavior).

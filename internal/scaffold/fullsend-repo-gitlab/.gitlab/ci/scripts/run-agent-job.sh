@@ -60,8 +60,13 @@ FULLSEND_PINNED_API_V4_URL="${FULLSEND_PINNED_GITLAB_URL}/api/v4"
 
 # Inference credential setup — write a file-based credential config
 # for Vertex AI so GOOGLE_APPLICATION_CREDENTIALS is available in the
-# sandbox. Uses direct federated identity (no SA impersonation) — the
-# inference WIF principal has roles/aiplatform.user granted directly.
+# sandbox. By default this uses direct federated identity (no SA
+# impersonation): the inference WIF principal has roles/aiplatform.user
+# granted directly. When FULLSEND_GCP_SERVICE_ACCOUNT is set
+# (config.inference.service_account, for an existing WIF provider the
+# installer does not own), the config also impersonates that service
+# account, which must grant the federated principal
+# roles/iam.workloadIdentityUser. Unset, the file is unchanged.
 # The credential_source.file points to the sandbox path because this
 # config is read inside the sandbox container. GitLab id_tokens last
 # the full job duration (~1 hour), so no OIDC refresh loop is needed
@@ -71,7 +76,32 @@ if [ -n "${FULLSEND_GCP_WIF_PROVIDER:-}" ]; then
   GCP_CRED_CONFIG_FILE=$(mktemp)
   trap 'rm -f "${OIDC_TOKEN_FILE}" "${GCP_CRED_CONFIG_FILE}"' EXIT
   echo "${FULLSEND_ID_TOKEN}" > "${OIDC_TOKEN_FILE}"
-  cat > "${GCP_CRED_CONFIG_FILE}" <<INFERENCECRED
+  if [ -n "${FULLSEND_GCP_SERVICE_ACCOUNT:-}" ]; then
+    # The installer validates the email; recheck the shape here so the
+    # value cannot break out of the JSON string below.
+    case "${FULLSEND_GCP_SERVICE_ACCOUNT}" in
+      *[!a-z0-9@.-]* | *@*@*)
+        echo "ERROR: FULLSEND_GCP_SERVICE_ACCOUNT is not a service account email" >&2
+        exit 1
+        ;;
+      [a-z]*@*.iam.gserviceaccount.com) ;;
+      *)
+        echo "ERROR: FULLSEND_GCP_SERVICE_ACCOUNT must end in .iam.gserviceaccount.com" >&2
+        exit 1
+        ;;
+    esac
+    cat > "${GCP_CRED_CONFIG_FILE}" <<INFERENCECRED
+{
+  "type": "external_account",
+  "audience": "//iam.googleapis.com/${FULLSEND_GCP_WIF_PROVIDER}",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "token_url": "https://sts.googleapis.com/v1/token",
+  "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${FULLSEND_GCP_SERVICE_ACCOUNT}:generateAccessToken",
+  "credential_source": { "file": "/sandbox/workspace/.gcp-oidc-token" }
+}
+INFERENCECRED
+  else
+    cat > "${GCP_CRED_CONFIG_FILE}" <<INFERENCECRED
 {
   "type": "external_account",
   "audience": "//iam.googleapis.com/${FULLSEND_GCP_WIF_PROVIDER}",
@@ -80,6 +110,7 @@ if [ -n "${FULLSEND_GCP_WIF_PROVIDER:-}" ]; then
   "credential_source": { "file": "/sandbox/workspace/.gcp-oidc-token" }
 }
 INFERENCECRED
+  fi
   export GOOGLE_APPLICATION_CREDENTIALS="${GCP_CRED_CONFIG_FILE}"
   export ANTHROPIC_VERTEX_PROJECT_ID="${FULLSEND_GCP_PROJECT_ID}"
   export GOOGLE_CLOUD_PROJECT="${FULLSEND_GCP_PROJECT_ID}"
@@ -377,27 +408,6 @@ print('true' if str(active).lower() in ('true', 'yes', '1', 'on') else 'false')
     echo "ERROR: Kill switch is active — all agent dispatch halted" >&2
     echo "Set kill_switch: false in .fullsend/config.yaml or .fullsend/config.base.yaml to resume" >&2
     exit 1
-  fi
-fi
-
-# Role enablement — skip stage if its role is not in configured roles
-if [ -n "${CONFIG_YAML}" ]; then
-  STAGE_ROLE="${STAGE}"
-  case "${STAGE}" in
-    code|fix) STAGE_ROLE="coder" ;;
-  esac
-  if ! ROLES=$(echo "${CONFIG_YAML}" | python3 -c "import sys,yaml; v=(yaml.safe_load(sys.stdin) or {}); roles=v.get('roles') or []; roles=roles if isinstance(roles,list) else [roles]; print('\n'.join(str(r) for r in roles)) if roles else None"); then
-    echo "WARNING: invalid .fullsend/config.yaml — treating as unconfigured (no role restriction)"
-    ROLES=""
-  fi
-  if [ -n "${ROLES}" ] && ! echo "${ROLES}" | grep -Fqx "${STAGE_ROLE}"; then
-    # Backward compat: "fullsend" in roles implies retro + prioritize
-    if echo "${STAGE}" | grep -Eq '^(retro|prioritize)$' && echo "${ROLES}" | grep -Fqx "fullsend"; then
-      echo "Stage '${STAGE}' allowed via 'fullsend' role — if customizing roles, add '${STAGE}' explicitly"
-    else
-      echo "Stage '${STAGE}' skipped — role '${STAGE_ROLE}' not in configured roles"
-      exit 0
-    fi
   fi
 fi
 

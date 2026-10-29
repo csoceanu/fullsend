@@ -41,8 +41,8 @@ github.com/cucumber/gherkin/go/v42 v42.0.0 h1:Ulh3E2awUUSSja+wonP/IOQ+ycmiZwZbgm
 github.com/cucumber/gherkin/go/v42 v42.0.0/go.mod h1:CsaumaO2dR9XvBc6ZyiGLMhWCKtTRDxgoxqJigSjSSg=
 github.com/cucumber/godog v0.16.0 h1:ezQbgItuWqZrjPUQwLJ3muwIlvzXBOfZso5QZfG7efE=
 github.com/cucumber/godog v0.16.0/go.mod h1:EDUX9yCqANK+GpbftMDeu61sUDtdLuo1JJgXD2n3bbM=
-github.com/cucumber/messages/go/v34 v34.2.0 h1:VCbcNOMz+f8ccjjOOx1NLBNhwvE7/X49Atc8klJa+i8=
-github.com/cucumber/messages/go/v34 v34.2.0/go.mod h1:LYUPjqlTS1kS0pdkdf6sS5uirnjwiIzEGyXPezXNhL8=
+github.com/cucumber/messages/go/v34 v34.2.1 h1:qBPEl+HhNJuRX8Kjaw1Pm60KOODZf2/4WQAi0SR/neE=
+github.com/cucumber/messages/go/v34 v34.2.1/go.mod h1:LYUPjqlTS1kS0pdkdf6sS5uirnjwiIzEGyXPezXNhL8=
 github.com/daulet/tokenizers v1.27.0 h1:MmFYAEDFz69s/nNQfHg59DWqHz3v94m99kEZ/JbL+s4=
 github.com/daulet/tokenizers v1.27.0/go.mod h1:YjFY1o1HGMyWkQgbXJDghhvke/yFDp2vGdIO2hYs4MQ=
 github.com/go-errors/errors v1.5.1 h1:ZwEMSLRCapFLflTpT7NKaAc7ukJ8ZPEjzlxt8rPN8bk=

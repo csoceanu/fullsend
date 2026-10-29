@@ -239,12 +239,17 @@ custom agent definitions exist.
 
 ### Triage agent
 
+The built-in triage and code agents still read `GITHUB_ISSUE_URL` from their
+GitHub overlays. Set both URL variables until the agents repository migrates
+to `FULLSEND_WORK_ITEM_URL`.
+
 Add to an env file:
 
 ```bash
 # fullsend-triage.env
 GH_TOKEN={github-pat}
 GITHUB_ISSUE_URL=https://github.com/{org}/{repo}/issues/{issue_num}
+FULLSEND_WORK_ITEM_URL=https://github.com/{org}/{repo}/issues/{issue_num}
 ```
 
 ```bash
@@ -297,6 +302,7 @@ GH_TOKEN={github-pat}
 PUSH_TOKEN={github-pat}
 PUSH_TOKEN_SOURCE=pat
 GITHUB_ISSUE_URL=https://github.com/{org}/{repo}/issues/{issue_num}
+FULLSEND_WORK_ITEM_URL=https://github.com/{org}/{repo}/issues/{issue_num}
 REPO_FULL_NAME={org}/{repo}
 ISSUE_NUMBER={issue_num}
 CODE_ALLOWED_TARGET_BRANCHES=main
@@ -421,7 +427,7 @@ fullsend run triage \
 For GitLab repositories, use `--forge gitlab` instead of `--mint-url`. The agent resolves its credential through the [GitLab role-credential contract](../../contributing/gitlab-role-credentials.md) and exports `GITLAB_TOKEN` (and `PUSH_TOKEN`, for roles with repository-write access) itself; it does not require the mint service. Set the matching per-role secret (Poller/Analyst/Coder, or a registered custom role). A missing role secret fails closed and does not fall back to `FULLSEND_FORGE_TOKEN` or a directly-set `GITLAB_TOKEN`. See the [operations guide](../getting-started/operations.md#gitlab-ci) for required environment variables. Self-hosted instances that use a private CA have a separate [certificate-provisioning contract](../getting-started/operations.md#private-ca-self-hosted-gitlab).
 
 Status comment behavior is configured via `status_notifications` in
-`config.yaml`. See [Status Notifications](customizing-agents.md#status-notifications).
+`config.yaml`. See [`status_notifications`](../../reference/config-reference.md#status_notifications).
 
 ## Using an inference gateway (experimental)
 
@@ -843,7 +849,7 @@ or gateway routing issues).
 
 1. **Start with a restrictive policy.** Create or modify a policy YAML that
    blocks the endpoint you want to test. See
-   [Building custom agents — Sandbox policy](building-custom-agents.md#step-3-define-the-sandbox-policy)
+   [Bring Your Own Agent — Sandbox policy](bring-your-own-agent.md#sandbox-policy)
    for the policy format.
 
 2. **Run the agent locally with `--keep-sandbox`:**

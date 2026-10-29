@@ -72,9 +72,7 @@ spec:
 #
 # A version-marker comment is injected at install/upgrade time so
 # `repos status` and drift detection can identify the installed
-# scaffold version. Repos enrolled before #7707 may still carry that
-# marker in the obsolete fullsend-dispatch.yml stub; converge
-# migrates it here.
+# scaffold version.
 #
 # The workflow: block lives in the root .gitlab-ci.yml because GitLab
 # does not merge multiple workflow: definitions across includes.

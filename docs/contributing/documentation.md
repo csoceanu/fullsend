@@ -37,6 +37,25 @@ variable or repository variable, check the repository-variable table in
 `docs/guides/getting-started/operations.md` and the documentation for the
 feature that consumes it.
 
+## Planning artifacts from agent sessions
+
+Do not commit spec, plan, task, or research files that a local agent session
+generates. This includes `specs/` directories and other output in the style of
+spec-kit or OpenSpec, such as `spec.md`, `plan.md`, `tasks.md`, and
+`research.md`. Remove them from your branch before you open a pull request.
+Reviewers should ask for their removal when they appear in a PR.
+
+These files describe how one session approached a change. They are not
+maintained after the change lands, so they go stale and mislead later readers.
+The same policy removed `docs/plans/` and `docs/superpowers/` from the
+repository in [PR #5972](https://github.com/fullsend-ai/fullsend/pull/5972),
+and both paths are listed in `.gitignore`.
+
+Record the durable outcome in the right place instead:
+
+- Design decisions belong in an ADR (see [ADR conventions](adrs.md)).
+- Implementation detail belongs in code, code comments, and tests.
+
 ## ADR annotations
 
 When a CLI change makes an ADR's decision obsolete, write a **new ADR** that supersedes the old one rather than editing the original decision text. Minor annotations (status updates, "see also" links) are welcome — see [ADR conventions](adrs.md) for the full rules.
@@ -71,6 +90,22 @@ Leave these as they are, because wrapping them breaks rendering or meaning:
 Do not rewrap existing documents wholesale. That produces the same large diffs
 this rule is meant to prevent. Write new content wrapped, and rewrap an
 existing paragraph only when you are already editing it.
+
+## CLI reference pages are manually maintained
+
+CLI reference pages under `docs/cli/` are manually maintained and will not
+auto-update. When modifying CLI commands, flag help text, defaults, or behavior
+in `internal/cli/`, update the corresponding reference page in `docs/cli/` as
+well as relevant tables and descriptions in `docs/guides/`.
+
+## Adding new documentation pages
+
+When adding a new doc under `docs/`, check `docs/.vitepress/config.ts` sidebar
+configuration. Sections using `getMarkdownFiles()` are auto-discovered,
+including nested directories (which become nested sidebar groups). All other
+sections require a manual `{ text, link }` entry. Also add the new folder's
+prefix to `search.options.scopes` in the same file so the folder's pages are
+reachable when search scope pills are active.
 
 ## Cross-reference by command group
 
@@ -136,7 +171,7 @@ The `admin` command group's `uninstall`/`analyze`/`enable`/`disable` subcommands
 | Category | Files |
 |----------|-------|
 | CLI reference | `docs/cli/run.md` |
-| Guides | `docs/guides/user/running-agents-locally.md`, `docs/guides/user/building-custom-agents.md`, `docs/guides/dev/cli-internals.md` |
+| Guides | `docs/guides/user/running-agents-locally.md`, `docs/guides/user/bring-your-own-agent.md`, `docs/guides/dev/cli-internals.md` |
 | ADRs | `docs/ADRs/0036-agent-execution-sandbox.md`, `docs/ADRs/0136-runner-secrets-through-one-stored-secret.md` |
 | Contributing | `docs/contributing/sandbox-topology.md` |
 | Go source | `internal/cli/run.go` |
@@ -151,8 +186,8 @@ The `admin` command group's `uninstall`/`analyze`/`enable`/`disable` subcommands
 
 ## Minor commands
 
-The commands below have lighter documentation footprints. Apply the general `grep` rule when changing them:
-
-`dispatch`, `scan`, `lock`, `poll`, `fetch-skill`, `fetch-review-threads`, `post-review`, `post-comment`, `reconcile-status`, `resolve-mr-source`, `check-protected-branch`
-
-The most comprehensive single reference for all commands (including minor ones) is `docs/guides/dev/cli-internals.md`, which documents the full command tree with flags.
+Commands without a subsection above have lighter documentation footprints.
+Apply the general `grep` rule when changing them. The comprehensive single
+reference for all commands (including minor ones) is
+`docs/guides/dev/cli-internals.md`, which documents the full command tree
+with flags.

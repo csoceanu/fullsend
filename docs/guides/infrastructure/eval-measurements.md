@@ -255,8 +255,9 @@ fullsend eval-measure \
 
 - `--agent` + `--output-dir` is the managed-job form. `--registry` /
   `--telemetry` remain for pointing at explicit files.
-- `--offline` rejects the remote `agents@v0` fetch (local FULLSEND_DIR
-  manifest only), matching `fullsend run --offline`.
+- `--offline` rejects network fetches of the remote `agents@v0` manifest but
+  still uses a manifest cached by an earlier online `eval-measure` with the
+  same `--fullsend-dir` (or the per-user cache when it is omitted).
 - Exit `0` when a score is `fail` — scores are data.
 - Exit `0` when telemetry or the manifest is missing (skip).
 

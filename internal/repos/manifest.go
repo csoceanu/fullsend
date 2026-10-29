@@ -357,6 +357,14 @@ type ResolvedConfig struct {
 	// the Vertex credential secrets when no command-line input does.
 	DeclaredInferenceProject string
 	DeclaredWIFProvider      string
+	// DeclaredWIFAudience and DeclaredServiceAccount are the GitLab
+	// vertex-wif options for an existing WIF provider the installer does
+	// not own (inference.wif_audience, inference.service_account): the
+	// agent job's ID token audience and the service account it
+	// impersonates. Empty when not declared, which keeps aud "fullsend"
+	// and direct federation.
+	DeclaredWIFAudience    string
+	DeclaredServiceAccount string
 	// ConfigManaged reports whether this repository's
 	// .fullsend/config.yaml is managed (ADR 0122). It is true for every
 	// repository; no config key is required to opt in (#8218).

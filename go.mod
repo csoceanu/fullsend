@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cucumber/godog v0.16.0
-	github.com/cucumber/messages/go/v34 v34.2.0
+	github.com/cucumber/messages/go/v34 v34.2.1
 	github.com/google/cel-go v0.30.0
 	github.com/google/uuid v1.6.0
 	github.com/knights-analytics/hugot v0.7.7

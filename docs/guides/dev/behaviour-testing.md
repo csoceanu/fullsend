@@ -69,9 +69,11 @@ Given a dummy agent that would:
 
 **`write_fixture`:** `dest_path, fixtures/...` — content lives in `e2e/behaviour/fixtures/`, embedded in the committed scenario script at `.fullsend/behaviour/current-scenario.yaml`.
 
-**`checkout_branch`:** a single regex-validated branch name. Probes the remote with `git ls-remote --exit-code`; when the ref exists it is fetched and the branch is based on `FETCH_HEAD` (so the branch carries that ref's commits), when the ref is absent the branch is based on the current `HEAD`, and any other probe failure (network, auth) fails the op instead of silently falling back. The op then records one marker commit on the branch so the applier post-script has content to push — and so a wrongful push moves the target branch tip, giving `branch ... is unchanged` assertions something to detect. Deliberately a narrow capability — not a general shell op.
+**`checkout_branch`:** a single regex-validated branch name. Code and fix sandboxes cannot fetch git objects from the forge, so all remote access runs on the runner, against the host copy of the target repository and its `origin`; no sandbox policy is widened. The runner probes `refs/heads/<name>` with `git ls-remote --exit-code`. When the ref exists, the runner fetches it into a runner-private ref (`refs/fullsend-behaviour/heads/<name>`, deleted afterwards, so the runner's own branches are untouched), writes a `git bundle` of it, and uploads the bundle into the sandbox. The sandbox fetches the bundle and bases the branch on `FETCH_HEAD` (so the branch carries that ref's commits), then removes the bundle. When the ref is absent, the branch is based on the sandbox's current `HEAD`. Any other probe failure (network, auth) fails the op instead of silently falling back. Every failure message includes git's own stderr, from the runner and from the sandbox. The op then records one marker commit on the branch so the applier post-script has content to push — and so a wrongful push moves the target branch tip, giving `branch ... is unchanged` assertions something to detect. Deliberately a narrow capability — not a general shell op — and agent-agnostic: it works in any sandbox whose target repository has an `origin`, code or fix.
 
 The `<issue>` placeholder expands to the scenario's issue number in `checkout_branch` args (only that op) and in the branch step definitions' branch names and head-branch patterns; order the `an issue` step before any step using it.
+
+`write_fixture` content also expands three placeholders when the dummy-agent Given step reads the fixture: `<issue>` becomes the scenario's issue number, `<repo>` becomes the leased repository as `owner/name`, and `<pr_head_sha>` becomes the scenario pull request's head SHA. Use them for agent results that must name the scenario's own issue, repository or commit, such as a retro `target_repo` or a review result's `head_sha`, since all three change on every run. A review fixture needs `<pr_head_sha>` to request changes, because the review post-script turns a result for any other SHA into a stale-head notice. Put the dummy-agent step after `an issue` when a fixture uses `<issue>`, and after a pull request step when it uses `<pr_head_sha>`; otherwise the Given step fails. The head SHA is read once, so a later push to the pull request makes the fixture stale. The expansion applies only to `write_fixture` content: not to its paths, other ops' args, or `{{fixture:...}}` inlined into an agent file.
 
 ### Assertion steps
 
@@ -92,7 +94,7 @@ Every scenario runs the stage under the dummy runtime selected at install time (
 
 - **Core (every run):** `Then the run selected the "dummy" runtime` reads the `runtime` field the runner writes into `metrics.json`, proving the repo's `.fullsend/config.yaml` `runtime:` reached backend selection (or `config.base.yaml` when `BEHAVIOUR_CONFIG_PRESET` supplied a preset). Use it in one representative scenario per stage; the artifact is already downloaded for the other assertions.
 - **Runtime-specific (gated):** `Given the repository runtime is "<name>"` commits `runtime: <name>` to the leased repo's config for this scenario only (CleanupScenario restores `dummy` — slots are reused, so never set it any other way; the step refuses if the slot is not on `dummy` to begin with). The custom-harness step commits only a placeholder for a relative `agent:` path, which a real runtime cannot act on, so follow it with the agent step for the runtime under test (`And a pi agent "<name>" defined as:`, `And a codex agent "<name>" defined as:`, `And a claude agent "<name>" defined as:` — all commit the same file) and a docstring holding the full agent file (frontmatter + body) — `{{fixture:fixtures/<stage>/<file>.json}}` inlines a result fixture so the model has a concrete, deterministic file to write (the custom harness carries no post-script, so nothing validates it; the assertions are on the transcript and metrics). Then the scenario dispatches the harness and asserts on artifacts: `the run selected the "pi" runtime`, `the pi session transcript records at least one tool call` (the agent used a tool through pi; with security enabled the run refuses to start without the intact hook adapter, so the call was mediated by it — the step does not inspect hook output), `the run metrics report tokens`, and `the run used model "<id>" without a fallback` (the `model` in `metrics.json` is exactly that bare id, `fallback_from` is empty and a turn was recorded, so the alias reached a model the project serves without falling back). Such scenarios cost a real model run on the pool repo's repo-scoped Vertex WIF and must be tagged `@requires:capability:runtime-<name>` so they only run where the runner declares the capability; `make behaviour-test` declares `runtime-pi`, `inference-gateway` and `inference-gateway-api-key` by default (the two gateway capabilities reach no real model; see [Wiring it into the behaviour tests](e2e-testing.md#wiring-it-into-the-behaviour-tests)) (a `Makefile` variable, so a PR adding a gated scenario exercises it on its own `pull_request_target` run — the workflow file itself comes from `main`); `BEHAVIOUR_CAPABILITIES= make behaviour-test` skips them. See `features/runtime/pi.feature`. `features/runtime/pi-openai.feature` is the same shape on `openai/gpt-5.6-luna` with the `openai` provider instead of Vertex host files; it is gated on `runtime-pi-openai`, which is **not** declared by default because it needs an OpenAI organization mapped to the pool repositories plus their `FULLSEND_OPENAI_*` variables ([OpenAI Workload Identity](../infrastructure/openai-workload-identity.md)). `features/runtime/codex-openai.feature` is that same shape on the codex runtime — `And a codex agent "<name>" defined as:` for the agent, and `the codex output stream records at least one tool call`, which reads the tee'd `codex exec --json` stream (`output.jsonl`) rather than a session transcript. It is gated on `runtime-codex-openai` for the same reason, and codex has no direct Vertex path, so — unlike pi, whose `runtime-pi` scenario runs on every job — codex has **no default behaviour coverage at all** until that organization exists; its evidence until then is unit tests, recorded fixtures, local smoke runs and the on-demand `runtime-codex-gateway` scenario. `features/runtime/codex-gateway.feature` is the same codex shape on a `gateway/` model through the test inference gateway (ADR 0137), pinned to `gateway/gpt-oss-120b`, which the test gateway serves on Responses (codex speaks nothing else, and fullsend renders no model catalog for it, so the id is pinned). Its token step is `the run metrics report tokens unless the requested model is "gateway/gpt-oss-120b"`: on the test gateway that model's usage arrives after the finish chunk, so codex records 0 tokens, and the step requires a recorded turn instead (the workflow and tool-call steps prove the model answered). It is gated on `runtime-codex-gateway`, also undeclared by default, because it costs a real model run on the test gateway's own Vertex service account. `features/runtime/claude-gateway.feature` runs Claude Code on `gateway/claude-haiku-5-5` through the test inference gateway in the `oidc` mode (no model list, no Vertex host files) and asserts the runtime and token metrics. It is gated on `runtime-claude-gateway`, which is **not** declared by default, skips when `E2E_INFERENCE_GATEWAY_URL` is unset, and should run against a sandbox image built from main.
-- **Per-agent (every run):** `Given the repository agents are configured with:` with a YAML docstring (`triage:\n  runtime: dummy`) sets runtime/model/effort on the leased repo's `agents:` entries (a name-only entry for a built-in, the sourced entry for a custom agent; only the settings given change) — validated the way `fullsend run` validates them — and CleanupScenario restores the pre-scenario `agents:` list. Pair it with `the repository runtime is "<real runtime>"` and pin every agent the scenario can dispatch (triage hands off to `code` via `ready-to-code`) back to `dummy`, then assert `the run selected the "dummy" runtime from "agents.triage"`, which also checks `runtime_source` in `metrics.json` ends with that entry — proof the per-agent entry decided, at dummy cost. The gated second scenario in the same file leaves the repo on `dummy` and puts one custom agent on pi with `model: haiku` from its entry (the harness says `opus`); `the run requested model "haiku" from "agents.<name>" and the provider reported a "haiku" model` checks `requested_model`, `override_source`, the reported `model` and `num_turns` in `metrics.json`. See `features/runtime/agent-settings.feature`.
+- **Per-agent (every run):** `Given the repository agents are configured with:` with a YAML docstring (`triage:\n  runtime: dummy`) sets runtime/model/effort/trigger on the leased repo's `agents:` entries (a name-only entry for a built-in, the sourced entry for a custom agent; only the settings given change) — validated the way `fullsend run` validates them — and CleanupScenario restores the pre-scenario `agents:` list. Pair it with `the repository runtime is "<real runtime>"` and pin every agent the scenario can dispatch (triage hands off to `code` via `ready-to-code`) back to `dummy`, then assert `the run selected the "dummy" runtime from "agents.triage"`, which also checks `runtime_source` in `metrics.json` ends with that entry — proof the per-agent entry decided, at dummy cost. The gated second scenario in the same file leaves the repo on `dummy` and puts one custom agent on pi with `model: haiku` from its entry (the harness says `opus`); `the run requested model "haiku" from "agents.<name>" and the provider reported a "haiku" model` checks `requested_model`, `override_source`, the reported `model` and `num_turns` in `metrics.json`. See `features/runtime/agent-settings.feature`.
 
 Do not add runtime coverage behind new `fullsend admin` flags. Use the repository config steps above.
 
@@ -115,6 +117,13 @@ head matches the pattern. The pattern is a Go regular expression,
 anchored on both ends by the step — a literal `.` in a branch name must
 be escaped, and a pattern that could also match a fixture branch (e.g. a
 decoy inside the `agent/` namespace) makes the step fail as ambiguous.
+The matched PR becomes the scenario's pull request, so the
+[forge-state steps](#forge-state-assertion-steps) that follow read the
+agent's PR rather than a fixture PR opened earlier.
+
+`branch "<name>" has advanced` is the counterpart of `is unchanged`: it
+passes only when the tip moved since it was recorded, for example because
+an agent pushed to the branch.
 
 For fail-closed paths there is a failure counterpart, asserted against
 the run conclusion plus the post-script's failure comment on the
@@ -126,9 +135,54 @@ Then the harness "fix" workflow fails reporting "Refusing to push"
 
 Pick a stable fragment of the failure-comment contract (the category
 label headline or a fixed detail phrase). No shipped scenario uses this
-step yet — the fix stage's only dispatch route is a `changes_requested`
-review from a review bot, which the suite cannot produce — but the
-step is unit-tested and ready for a suite-reachable fail-closed path.
+step yet; it is unit-tested.
+
+### Forge-state assertion steps
+
+`pkg/behaviourtest/steps/forge_state.go` asserts what agent post-scripts
+leave on the forge. Agent behaviour scenarios in `fullsend-ai/agents` use
+these steps through `go.mod`. Each step is a single forge read. Transient
+errors are retried with the suite's retry helper (`cleanupRetry`), but no
+step polls. Assert after `the harness "<agent>" workflow completes
+successfully`, because by then the post-script has written to the forge.
+"The issue" is the scenario's issue. "The pull request" is the
+scenario's pull request: the one a Given step opened, or the agent's PR
+once `the pull request head branch matches` has found it.
+
+| Step | Passes when |
+|------|-------------|
+| `the issue has label "<label>"` | The issue carries the label |
+| `the issue does not have label "<label>"` | The issue does not carry the label |
+| `the pull request has label "<label>"` | The pull request carries the label |
+| `the pull request does not have label "<label>"` | The pull request does not carry the label |
+| `the issue has been closed as "<reason>"` | The issue is closed with state reason `completed`, `not_planned` or `duplicate` |
+| `the pull request has been closed` | The pull request is closed, merged or not |
+| `a comment on the issue contains "<text>"` | Some issue comment contains the text, such as a sticky marker like `<!-- fullsend:agent-status:` |
+| `a comment on the pull request contains "<text>"` | Some pull request comment contains the text |
+| `the pull request body contains "<text>"` | The PR body contains the text. `<issue>` expands, so `"Closes #<issue>"` checks the closing reference |
+| `an issue with label "<label>" and title containing "<text>" exists` | An open issue other than the scenario's own carries the label and has a matching title, such as an issue an agent filed. `<issue>` expands; use it in the title so a leftover from an earlier run cannot match. The matched issue is closed at cleanup |
+
+The Then wording `the pull request has been closed` is kept apart from
+the When step `the pull request is closed`, which closes it, so godog
+matching stays unambiguous.
+
+Pull requests are read through the issue endpoints, which serve pull
+requests as issues on GitHub. The existing pull request label and close
+steps write through the same endpoints. GitLab numbers merge requests
+apart from issues, so tag scenarios that use the pull request steps
+`@skip:gitlab`. Only GitHub reports a close reason, so `has been closed
+as` fails on other forges.
+
+Two Given steps set up pull requests for these scenarios:
+
+- `the write actor opens a pull request linked to the issue` opens the
+  write actor's PR with `Closes #<issue>` in its body. Only the write
+  actor can push a branch to the test repository. Order `an issue`
+  before it.
+- `a pull request that changes "<path>"` opens a PR, as the e2e
+  installation identity, whose one commit writes `<path>` (for example
+  `scripts/x.sh`) instead of the default `behaviour/pr.txt`. Its branch
+  and PR are cleaned up with the scenario.
 
 ### Compatibility tags
 
@@ -262,7 +316,7 @@ gh workflow run e2e.yml --repo fullsend-ai/fullsend \
 
 This runs the branch's workflow and test target in the dev environment. The regular `behaviour` job is skipped for this playback dispatch. Artifact redaction uses the default-branch script.
 
-In CI, the test runner mints cross-org `e2e` installation tokens via OIDC for GitHub API operations. Triage workflows on the pool org's `test-repo` mint same-org `triage` tokens from vendored reusable workflows; those require per-repo mint enrollment (`PER_REPO_WIF_REPOS`) on the hosted mint project. Pool `test-repo` repos are enrolled once by a GCP admin — not during CI install. Before `github setup`, the install driver resolves the repo-scoped inference WIF provider: it runs `fullsend inference status` and runs `fullsend inference provision` only when the provider is not healthy. Provisions are serialised across the process. The resolved provider is cached per repo name for the rest of the run, including after the repo is deleted and recreated, because the provider ID, its attribute condition and the Vertex AI grant are all keyed by `owner/repo`, not by repo ID (`Provisioner.ProvisionWIF` in `internal/dispatch/gcf/provisioner.go` creates the provider and the grant, and is the source of truth for these bindings). See [e2e-testing.md](e2e-testing.md#behaviour-tests-and-per-repo-mint-enrollment).
+In CI, the test runner mints cross-org `e2e` installation tokens via OIDC for GitHub API operations. Triage workflows on the pool org's `test-repo` mint same-org `triage` tokens from vendored reusable workflows; those require per-repo mint enrollment (`PER_REPO_WIF_REPOS`) on the hosted mint project. Pool `test-repo` repos are enrolled once by a GCP admin — not during CI install. Before `github setup`, the install driver resolves the repo-scoped inference WIF provider: it runs `fullsend inference status` and runs `fullsend inference provision` only when the provider is not healthy. Provisions are serialised across the process. A just-provisioned repo can briefly still report `not_provisioned`, so after a provision the driver re-reads `fullsend inference status` with a bounded backoff (up to 60 s of waiting) until the provider is healthy; the re-reads run after the provision lock is released, so a slow repo does not hold up other repos' provisions. The resolved provider is cached per repo name for the rest of the run, including after the repo is deleted and recreated, because the provider ID, its attribute condition and the Vertex AI grant are all keyed by `owner/repo`, not by repo ID (`Provisioner.ProvisionWIF` in `internal/dispatch/gcf/provisioner.go` creates the provider and the grant, and is the source of truth for these bindings). See [e2e-testing.md](e2e-testing.md#behaviour-tests-and-per-repo-mint-enrollment).
 
 ### Repo allocation via the shared slot driver
 
@@ -585,7 +639,7 @@ The `fork-dispatch.feature` file defines the canonical fork-PR behaviour contrac
 
 **Consolidation pattern:** To conserve parallel execution slots, add negative-path harnesses (disabled agent, CEL exclusion) alongside the positive-path harness in a single scenario rather than creating separate scenarios. The positive harness wait acts as the settle window for negative assertions (piggyback pattern — see `negativeSettleDuration` in `dispatch.go`). The kill switch scenario cannot be consolidated because it blocks all harnesses.
 
-**Unauthorized-actor denial:** The row lives in `e2e/behaviour/features/platform/trigger-auth.feature`, the home for platform trigger authorization scenarios, rather than in `fork-dispatch.feature`. The shared dispatch gate (`harnessdispatch.IsAuthorized`) authorizes label-added events without a write role. So the denial can only be exercised through a transition that needs one: the PR `opened` event, sent by the outsider when it opens the PR from its own fork. The harness trigger matches both `opened` and a label, and the scenario orders its steps as follows:
+**Unauthorized-actor denial:** The row lives in `e2e/behaviour/features/platform/trigger-auth.feature`, the home for platform trigger authorization scenarios, rather than in `fork-dispatch.feature`. The dispatch gate (`harnessdispatch.IsEventAuthorized`, then the per-harness `role:` threshold from `IsHarnessAuthorized`) authorizes label-added events without any role. So the denial can only be exercised through a transition that needs one — for the `fork-auth-probe` harness (`role: triage`), the `triage` threshold: the PR `opened` event, sent by the outsider when it opens the PR from its own fork. The harness trigger matches both `opened` and a label, and the scenario orders its steps as follows:
 
 1. The denial assertions (`the harness dispatch completes with an empty matrix`, then `agent did not run`, then `dispatched exactly 0 times`) run before the label is added. The first is the one that checks the required outcome: the other two also pass when the dispatch job errored or when no run was created, because neither counts a run without an agent job. `harness-run` uses a `cancel-in-progress` concurrency group per agent and PR, and the dispatch count excludes cancelled jobs. A leaked `opened` dispatch that the label run cancelled would therefore not be counted.
 2. The label, added afterwards by the e2e identity, must dispatch. This positive control shows that the harness is registered and its trigger matches the PR, so the denial cannot pass just because the harness never loaded.
@@ -594,7 +648,22 @@ The `fork-dispatch.feature` file defines the canonical fork-PR behaviour contrac
 
 **`a disabled custom harness "<name>" with:`** — Registers the harness YAML under `.fullsend/harness/<name>.yaml` and adds an agent entry with `enabled: false` to the repo's `config.yaml`. Use this step for negative dispatch assertions where a single agent should be excluded while other agents in the same scenario continue to run. This is *not* the kill switch; for the global emergency stop that blocks all harnesses, use `the kill switch is active`.
 
-**`the harness dispatch completes with an empty matrix`** — Waits for the harness workflow run(s) created since the last trigger step, then requires every run that was not cancelled to have completed with its `Harness dispatch` job succeeded and no `Harness run (<agent>)` job scheduled. It fails if the dispatch job failed or an agent was scheduled, and keeps waiting while no run exists yet or a run is still in progress, so a denial is never inferred from a missing or failed run. Pair it with `agent did not run` and `dispatched exactly 0 times` for denial scenarios. It needs a CI driver that implements the optional `ci.EmptyMatrixWaiter`; the GitHub Actions driver does.
+**`the harness dispatch completes with an empty matrix`** — Waits for the harness workflow run(s) created since the last trigger step, then requires every run that was not cancelled or skipped (a skipped run, such as the shim run for a bot comment, ran no job) to have completed with its `Harness dispatch` job succeeded and no `Harness run (<agent>)` job scheduled. It fails if the dispatch job failed or an agent was scheduled, and keeps waiting while no run exists yet or a run is still in progress, so a denial is never inferred from a missing or failed run. Pair it with `agent did not run` and `dispatched exactly 0 times` for denial scenarios. It needs a CI driver that implements the optional `ci.EmptyMatrixWaiter`; the GitHub Actions driver does.
+
+**`the harness "<agent>" run was skipped by its pre-script`** — Downloads
+the `fullsend-<agent>` artifact of the workflow run the scenario is tracking
+and requires two things. First, the host-written `run-telemetry.jsonl` must
+record `fullsend.prescript.skipped=true` on its root `run` span. Second, no
+agent output (`agent-result.json`, or the dummy runtime's
+`behaviour-results.json`) may be present. A skipped run still uploads its
+artifact and its workflow still succeeds, so
+`the harness "<agent>" workflow completes successfully` passes either way.
+Use this step after that one, which records the run. On failure it reports
+what it found: `fullsend.prescript.skipped=false`, a missing attribute (the
+harness has no pre-script), missing telemetry, or the agent output files
+that were present.
+
+**`a changes-requested review is submitted on the pull request`** — Submits a `REQUEST_CHANGES` review on the scenario's pull request as the e2e identity, a bot that is not the registered review bot, and restarts the trigger time. GitHub only. GitHub refuses a changes-requested review on the reviewer's own pull request, so a test actor must open it (`the write actor opens a pull request`).
 
 **`the kill switch is active`** — Sets `kill_switch: true` in the repo's `config.yaml` (the overlay), causing `Dispatch` to return an empty matrix for *all* agents. Use this step in a dedicated scenario where no harness should run. Because the kill switch blocks everything, it cannot share a scenario with a positive-path harness.
 
@@ -646,7 +715,7 @@ Reference: [`awaitWorkflowReady`](../../../pkg/behaviourtest/drivers/install/ens
 
 Each lease of a pool repo adds approximately 3–5 minutes of overhead (delete leftover state + create + `github setup` + Actions settle; the first lease of each name also resolves inference WIF), including when a later scenario reuses the same `test-repo-NN` name. The behaviour job's `timeout-minutes` in `e2e.yml` and the `go test -timeout` in the Makefile must account for this overhead across all leases in the suite.
 
-Current budget: **45 minutes** for both the CI job timeout and `go test -timeout`. If adding scenarios that lease additional repos (or increase reuse of the 12-slot pool), verify that the total provisioning overhead plus test execution time fits within this budget. The [GitHub mint scope scenarios](#github-mint-scope-scenarios) lease one repo per Examples row. Adjust both values together — a `go test -timeout` higher than the CI `timeout-minutes` means the Go process is killed mid-test with no artifact collection. The same rule applies to the `playback-test` target (also 45 minutes) and to any CI job that runs it.
+Current budget: **45 minutes** for both the CI job timeout and `go test -timeout`. If adding scenarios that lease additional repos (or increase reuse of the 12-slot pool), verify that the total provisioning overhead plus test execution time fits within this budget. The [GitHub mint scope scenarios](#github-mint-scope-scenarios) and the [GitHub bot-role lookup scenarios](#github-bot-role-lookup-scenarios) lease one repo per Examples row. Adjust both values together — a `go test -timeout` higher than the CI `timeout-minutes` means the Go process is killed mid-test with no artifact collection. The same rule applies to the `playback-test` target (also 45 minutes) and to any CI job that runs it.
 
 Reference: [`.github/workflows/e2e.yml`](../../../.github/workflows/e2e.yml) behaviour job `timeout-minutes` and `Makefile` `behaviour-test` target.
 
@@ -770,6 +839,21 @@ The mint answers a GitHub token it does not accept with the same 401 in three ca
 The Scenario Outline holds a negative control for each failure class, and none of them may pass as a success. An `invalid credential` must fail as `authentication`. The `unreachable mint address` (`https://127.0.0.1:1`) must fail as `transport`. The `suite mint address with a non-mint path` (the suite mint address plus `/not-a-mint`, which the mint answers with 404) must fail as `deployment`. The deployment control sends the write actor credential only to the suite's own mint.
 
 The steps register the credential with the secret redactor. They store only redacted CLI output and save it as `mint-status-<scenario>-*/cli-output.txt` under `BEHAVIOUR_ARTIFACT_DIR`. The last step of each scenario fails if the raw CLI output held the credential, or if any file under `BEHAVIOUR_ARTIFACT_DIR` holds the write actor's PAT. In CI the PAT is a repository secret, so GitHub Actions also masks it in the job log.
+
+## GitHub bot-role lookup scenarios
+
+`e2e/behaviour/features/platform/bot-role-lookup.feature` covers the GitHub bot-role lookup ([ADR 0107](../../ADRs/0107-bot-identity-resolution-for-dispatch-authorization.md)): the mint's `POST /v1/bot-role`, called with a real GitHub Actions OIDC token, against the suite's own mint. It reuses the [mint probe topology](#probe-topology): the steps commit a reusable probe workflow (`pkg/behaviourtest/steps/bot_role_probe_workflow.yml`) as `.github/workflows/bot-role-probe.yml` to the slot's approved host `test-repo-NN-mint-host`, then push a shim to a temporary branch (`behaviour/bot-role-probe-<nonce>`) of the leased repository. The suite's mints accept any workflow basename (`ALLOWED_WORKFLOW_FILES` is `*` on the preview and stage mints). Each Examples row is one identity:
+
+| Identity | Subject lookup | Expected outcome |
+|----------|----------------|------------------|
+| `registered:<role>` | `<app set>-<role>[bot]`, where the app set is `BEHAVIOUR_APP_SET` (default `fullsend-test`, see `install.AppSet`) and the role a `fullsend-test` role | `recognized` with that role |
+| `unregistered-e2e` | The suite's own e2e App, discovered at runtime from the suite's GitHub credential. It must be a `[bot]` login and none of the registered logins, or the row fails as an infrastructure failure | `no-match` |
+| `claimed-in-event` | The suite's e2e App, with `"role":"review"` added to the request body, which the mint must ignore | `no-match` |
+| `forced-failure` | The registered review bot, sent with a credential that keeps the verified token's header and payload but replaces its signature | `lookup-failed` |
+
+The same run makes a **control** lookup of the registered review bot, which must answer 200 `recognized` with role `review`, from a token the probe verified, with the leased repository as the OIDC `repository` claim. Otherwise the row fails as an infrastructure failure. As in the mint probe, each job verifies its own OIDC token first (`oidc_verified`). Probe-side configuration, OIDC and transport failures are always infrastructure failures, and so is a lookup-mode answer that `botidentity.ParseMintBotRoleResponse` rejects. A forced failure counts as `lookup-failed` only for a verified token answered 401 `authentication failed`. Any other status is an infrastructure failure, and a 200 fails the row because the mint accepted an invalid credential. No infrastructure failure can satisfy an expected outcome.
+
+The probe uploads only the request fields, `oidc_verified`, the two OIDC claims, the HTTP status, the `outcome`, `role` and `error` strings of the mint's body (each at most 300 characters), and a probe-side error class. It never writes a token. The remaining steps project the subject's outcome onto a normalized actor with `botidentity.ApplyBotRoleResult`, and check the event-level pre-CEL gate (`harnessdispatch.IsEventAuthorized`) for a non-label `review_submitted` event. A `no-match` and a `lookup-failed` are both denied before CEL, and `role_verified` (`true` and `false`) keeps them apart. `TestBotRoleLookupFeature_RowsMatchSteps` checks every Examples row against the step patterns and classification. Each of the 4 rows leases a pool repository.
 
 ## Version pinning for `fullsend-ai/agents`
 
@@ -896,6 +980,8 @@ suiteRunner := godog.TestSuite{
 
 **`scm.Driver.CreateUserFork` addition (breaking change):** The `scm.Driver` interface now includes `CreateUserFork(ctx, owner, repo string) (forkOwner, forkRepo string, err error)`, which forks a repository into the authenticated user's own account, the way an outside contributor does. The forge picks the fork's name. The `owned by the <actor>` fork step uses it. The GitHub and GitLab reference implementations pass through to the existing `forge.Client.CreateFork` method. This widens the required method set, so external `scm.Driver` implementations must add this method when upgrading past this release or they will no longer satisfy the interface.
 
+**`scm.Driver.ListOpenIssues` addition (breaking change):** The `scm.Driver` interface now includes `ListOpenIssues(ctx, owner, repo string, labels ...string) ([]forge.Issue, error)`, returning the repository's open issues (pull requests excluded) that carry every given label. The `an issue with label ... and title containing ... exists` step uses it. The GitHub and GitLab reference implementations pass through to the existing `forge.Client` method of the same name. This widens the required method set, so external `scm.Driver` implementations must add this method when upgrading past this release or they will no longer satisfy the interface.
+
 **`ci.RunLister` optional interface:** `ListRecentRuns(ctx, owner, repo string, limit int) ([]forge.WorkflowRun, error)` lists a repository's most recent workflow runs across all workflows. Failure log collection uses it to find runs that no step resolved. It is a separate interface, not a `ci.Driver` method, so external `ci.Driver` implementations keep compiling. Without it, failed scenarios still get a failure summary but only the run a step resolved has its logs collected. The GitHub Actions and GitLab CI reference drivers implement it.
 
 **`world.World.MintProbe` addition:** The new `MintProbe *world.MintProbe` field (with the `world.MintProbe` and `world.MintProbeResult` types) holds the state of the [GitHub mint scope scenarios](#github-mint-scope-scenarios). It is a non-breaking addition. The mint probe steps need a CI driver that implements the optional `ci.RunLister` interface, as the GitHub Actions driver does.
@@ -905,6 +991,10 @@ suiteRunner := godog.TestSuite{
 **`install.MintURLReporter` optional interface and `install.MintStatusTeamSlug`:** `MintURL() string` reports the suite's mint URL. The [CLI mint status scenarios](#cli-mint-status-scenarios) use it to get the mint address. It is a separate interface, not an `install.Driver` method, so external `install.Driver` implementations keep compiling. The mint status steps fail with a `deployment` error on a driver without it. `MintStatusTeamSlug` (`mint-status`) names the team the CF mint drivers pass as `--status-github-group <org>/mint-status`.
 
 **`world.World.CLIBinary`, `world.World.WriteToken` and `world.World.MintStatus` additions:** `RunSuite` sets `CLIBinary` to the CLI it builds and `WriteToken` to `TEST_ACTOR_WRITE_PAT`. `MintStatus` (type `world.MintStatus`) holds the CLI mint status scenario state. All three are non-breaking additions. A custom bootstrap must set `CLIBinary` and `WriteToken` to run the mint status scenarios.
+
+**`world.World.BotRoleProbe` addition:** The new `BotRoleProbe *world.BotRoleProbe` field (with the `world.BotRoleProbe`, `world.BotRoleProbeResult` and `world.BotRoleProbeResponse` types) holds the state of the [GitHub bot-role lookup scenarios](#github-bot-role-lookup-scenarios). It is a non-breaking addition. Like the mint probe steps, the bot-role probe steps need a CI driver that implements `ci.RunLister`.
+
+**`install.AppSet` addition:** `AppSet()` returns the GitHub App set the behaviour mints are deployed with (`BEHAVIOUR_APP_SET`, default `fullsend-test`). The bot-role lookup steps derive registered bot logins (`<app set>-<role>[bot]`) from it.
 
 **`ci.EmptyMatrixWaiter` optional interface:** `WaitForHarnessEmptyMatrix(ctx, owner, repo string, after time.Time) (*forge.WorkflowRun, error)` backs the `the harness dispatch completes with an empty matrix` step. It is a separate interface, not a `ci.Driver` method, so external `ci.Driver` implementations keep compiling; the step fails with an explanatory error on a driver without it. Only the GitHub Actions reference driver implements it.
 

@@ -16,6 +16,10 @@
 > overlays set any field except `base`, `trigger`, `overlays`, `slug`, `role`
 > and `forge`, with guarded fields limited to trusted inputs. The tables below
 > change when it is implemented.
+> [ADR 0151](../ADRs/0151-harness-human-role-minimums.md) adds the target
+> `human_min_role` field at the top level and in guarded overlays, with its
+> overlay selected before actor admission and pinned through the run. Legacy
+> `forge:` blocks cannot set it; the tables below remain current behavior.
 
 ## Field classification
 
@@ -42,35 +46,35 @@ These fields can appear at the harness top level (as defaults) and inside
 
 ### Fields that stay at top level only
 
-These fields are platform-neutral and cannot be overridden per-forge or
-per-overlay:
+These fields cannot be overridden per-forge or per-overlay. A key for one of
+them under `forge:` or `overlays:` is ignored, not an error:
 
 | Field              | Rationale                                          |
 |--------------------|----------------------------------------------------|
-| `agent`            | Agent definitions are forge-agnostic               |
-| `model`            | Model selection is independent of forge             |
-| `image`            | Container images are platform-neutral              |
+| `agent`            | Agent definition                                   |
+| `model`            | Model selection                                    |
+| `image`            | Container image                                    |
 | `api_servers`      | REST proxies abstract forge details                |
-| `plugins`          | Plugin directories are forge-agnostic; each entry is a local path or a pinned URL and keeps its own `env`/`pi` options (ADR-0038, ADR-0094). **Top level only** — not a `ForgeConfig` field, so it is not settable under `forge:` or `overlays:` (a `plugins:` key there is ignored, not an error) |
-| `agent_input`      | Agent prompt input is forge-agnostic               |
-| `timeout_minutes`  | Timeouts are operational, not forge-specific        |
-| `sandbox_timeout_seconds` | Sandbox-level timeout, not forge-specific   |
-| `security`         | Security scanning is forge-agnostic                |
+| `plugins`          | Plugin directories; each entry is a local path or a pinned URL and keeps its own `env`/`pi` options (ADR-0038, ADR-0094) |
+| `agent_input`      | Agent prompt input                                 |
+| `timeout_minutes`  | Run timeout                                        |
+| `sandbox_timeout_seconds` | Sandbox-level timeout                       |
+| `security`         | Security scanning                                  |
 | `allowed_remote_resources` | URL allowlist for resource fetching (ADR 0038) |
 | `description`      | Documentation, no runtime effect                   |
-| `role`             | Agent identity is forge-agnostic                   |
+| `role`             | Agent identity                                     |
 | `slug`             | Kept top-level; per-forge slug differences handled via `base` composition |
-| `base`             | Composition is a structural concern, not forge-specific |
+| `base`             | Composition is a structural concern                |
 | `doc`              | Documentation path, no runtime effect              |
-| `effort`           | Effort level is operational, not forge-specific     |
-| `readonly_repo`    | Repo access mode is forge-agnostic                 |
+| `effort`           | Effort level                                       |
+| `readonly_repo`    | Repo access mode                                   |
+| `allow_runtime_fetch` | Runtime fetch opt-in                            |
+| `max_runtime_fetches` | Fetch cap                                       |
+| `trigger`          | CEL trigger expression, evaluated against normalized events (ADR-0061) |
+| `privilege_levels` | Mint privilege per run-stage (ADR-0073)            |
+| `schema_version`   | Schema contract version (ADR-0127); absent = version `1`. **Planned, not yet implemented** |
+| `preflight_check`  | Single host-dependency gate run once before sandbox creation for `pre_script`/`post_script`/`validation_loop`; a literal `sh -c` command, not a script path (ADR-0128, ADR-0129). **Planned, not yet implemented** ([#8722](https://github.com/fullsend-ai/fullsend/issues/8722)) |
 | `target_repo_required` | Planned top-level scalar capability (ADR-0150); defaults to `true`, and a child harness may override an inherited base value. It is not a `ForgeConfig` field, so legacy `forge:` blocks and `overlays:` cannot set it. **Planned, not yet implemented** |
-| `allow_runtime_fetch` | Runtime fetch opt-in is forge-agnostic          |
-| `max_runtime_fetches` | Fetch cap is operational, not forge-specific     |
-| `trigger`          | CEL trigger expression is evaluated against normalized events, not forge-specific (ADR-0061) |
-| `privilege_levels` | Mint privilege per run-stage is forge-agnostic (ADR-0073). **Top level only** — not a `ForgeConfig` field |
-| `schema_version`   | Schema contract version, forge-agnostic (ADR-0127); absent = version `1`. **Planned, not yet implemented** |
-| `preflight_check`  | Single host-dependency gate run once before sandbox creation for `pre_script`/`post_script`/`validation_loop`; a literal `sh -c` command, not a script path (ADR-0128, ADR-0129). **Planned, not yet implemented** |
 
 ## Semantic types (ADR 0127)
 
@@ -85,14 +89,14 @@ references are scalar values, not shell commands.
 
 | Semantic type | Meaning | Fields |
 |---|---|---|
-| inline command | Executed via `sh -c` on the host, not resource-resolved | `validation_loop.preflight_check`; top-level `preflight_check` (planned) |
+| inline command | Executed via `sh -c` on the host against the allowlisted preflight environment (credential-safe), not resource-resolved | `validation_loop.preflight_check`; top-level `preflight_check` (planned) |
 | runtime local path | Path to a file or directory in the local configuration, not a command | `pre_script`, `post_script`, `validation_loop.script`, `validation_loop.schema`, `agent_input` (directory), `host_files[].src` (host path, optional `${VAR}` expansion), `api_servers[].script` (path resolved, server startup planned) |
 | resource reference | Local path or pinned URL resolved/fetched as applicable | `agent`, `base`, `policy`, `skills[].source`, `plugins[].path`, `openshell.profiles[]`; `providers[]` has additional identifier semantics below |
 | skill override | Key is a path within the skill; value is a local file, pinned URL, or `null` to remove the file | `skills[].overrides[<path>]` |
 | source metadata path | Describes a path in the source repository; not runtime-resolved or delivered | `doc` |
 | destination path | Names a location inside the sandbox, not a host file to resolve | `host_files[].dest` |
 | structural | Contains nested fields, lists, maps, or conditions | `forge`, `overlays[]`, `validation_loop`, `host_files[]`, `api_servers[]`, `skills[]`, `plugins[]`, `plugins[].pi`, `openshell`, `security` and its nested scanner/hook/escalation/trace blocks, `runner_env`, `env`, `env.runner`, `env.sandbox`, `privilege_levels`, `api_servers[].env`, `plugins[].env`, `allowed_remote_resources`, `providers` |
-| scalar | Interpreted as a configuration value, never as a path solely because it resembles one | `role`, `slug`, `description`, `image`, `model`, `effort`, `timeout_minutes`, `readonly_repo`, `target_repo_required` (planned; boolean, default `true`), `sandbox_timeout_seconds`, `allow_runtime_fetch`, `max_runtime_fetches`, `trigger` (CEL expression), `schema_version` (planned); `validation_loop.max_iterations`, `validation_loop.feedback_mode`, `host_files[].expand`, `host_files[].optional`, `api_servers[].name`, `api_servers[].port`, `api_servers[].env[<key>]`, `plugins[].env[<key>]`, `plugins[].pi.args[]`, `runner_env[<key>]`, `env.runner[<key>]`, `env.sandbox[<key>]`, `privilege_levels[<stage>]`, `allowed_remote_resources[]`, `overlays[].when` (CEL expression); all leaf values under `security` |
+| scalar | Interpreted as a configuration value, never as a path solely because it resembles one | `role`, `slug`, `description`, `image`, `model`, `effort`, `timeout_minutes`, `readonly_repo`, `sandbox_timeout_seconds`, `allow_runtime_fetch`, `max_runtime_fetches`, `trigger` (CEL expression), `schema_version` (planned); `validation_loop.max_iterations`, `validation_loop.feedback_mode`, `host_files[].expand`, `host_files[].optional`, `api_servers[].name`, `api_servers[].port`, `api_servers[].env[<key>]`, `plugins[].env[<key>]`, `plugins[].pi.args[]`, `runner_env[<key>]`, `env.runner[<key>]`, `env.sandbox[<key>]`, `privilege_levels[<stage>]`, `allowed_remote_resources[]`, `overlays[].when` (CEL expression); all leaf values under `security` |
 
 For local harnesses, relative runtime paths resolve from the `.fullsend`
 configuration root (the parent of `harness/`), **not** from the YAML file's
@@ -162,7 +166,6 @@ Two independent precedence axes govern field resolution
 | `api_servers`    | Concatenated (base + child)                          | Absent (nil) = inherit |
 | `env`            | Sub-maps (`runner`, `sandbox`) merged independently; forge/child keys win (ADR-0055) | Absent (nil) = inherit |
 | `security`       | Child replaces base entirely (if non-nil)            | Absent (nil) = inherit |
-| `target_repo_required` | Top-level scalar; a child value overrides the inherited base value. It is not settable in legacy `forge:` blocks or `overlays:`; ADR-0112's non-empty/non-zero overlay rule therefore cannot apply its `false` relaxation. | Absent = inherit through base composition; if still absent, defaults to `true` (planned) |
 | `overlays`       | Concatenated (base + child); all matching entries merged at resolution with later precedence (ADR-0088) | Absent (nil) = inherit |
 
 ## `ForgeConfig` struct
@@ -229,7 +232,7 @@ Overlay `when` expressions are evaluated with:
 
 | Variable | Type | Source |
 |---|---|---|
-| `event` | `normevent.Event` | The triggering event — fields like `source.system`, `entity.kind`, `transition.kind` |
+| `event` | `normevent.Event` | The triggering event — fields like `source.system`, `entity.kind`, `transition.kind`. The ADR 0107 fields `actor.bot_role` and `actor.role_verified` are present only when an adapter performed a bot-role lookup; guard them with `has()` |
 | `runtime.forge` | `string` | Effective forge platform (precedence: CLI flag > config.forge > CI env vars) |
 | `config` | `map[string]any` | Full per-repo config from `config.yaml` |
 
@@ -237,6 +240,26 @@ Overlay `when` expressions are evaluated with:
 
 `forge:` and `overlays:` must not coexist in the same harness (post-merge).
 `forge:` is deprecated; new harnesses should use `overlays:` instead.
+
+## Event payload and normalized-event resolution
+
+During dispatch, fullsend projects normalized events (`internal/normevent/`) into
+`event_payload` via `buildEventPayload` in `internal/harnessdispatch/project.go`.
+This payload provides backwards-compatible legacy forge fields (`issue`,
+`pull_request`, `comment`) alongside `_normalized_event` (the serialized
+`normevent.Event` map).
+
+When resolving CEL-guarded overlays via `ResolveOverlays(event, forgePlatform,
+config)`, the runtime passes the deserialized `normevent.Event` directly as
+the `event` variable in the CEL environment (see [CEL environment](#cel-environment)
+above). When adding, modifying, or removing fields in normalized event structures
+or `event_payload`:
+
+1. Update `buildEventPayload` in `internal/harnessdispatch/project.go` and its
+   unit tests in `internal/harnessdispatch/project_test.go`.
+2. Update the projection table in `docs/normative/normalized-event/v1/README.md`.
+3. If new event fields or properties are exposed to overlay CEL evaluation,
+   document them in the [CEL environment](#cel-environment) table above.
 
 ## Related
 

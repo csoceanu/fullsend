@@ -50,6 +50,7 @@ agents:                              # Registered agent sources and per-agent tu
     subagents:                       # Per-agent sub-agent model map
       default: sonnet                # Fallback model for personas without an explicit entry
       code-reviewer: opus            # Model for a specific persona
+    # trigger: <CEL expression>      # When the built-in review agent runs (review entry only)
 
 # ── Remote resources ─────────────────────────────────────────
 allowed_remote_resources:            # URL prefixes allowed for remote resources (agents, policies, skills, plugins, profiles, providers, and base composition)
@@ -87,6 +88,8 @@ inference:
   project: my-gcp-project           # GCP project ID (must be provided by installer)
   region: global                     # GCP region for inference requests
   wif_provider: projects/123/locations/global/workloadIdentityPools/pool/providers/prov  # WIF provider resource name
+  wif_audience: ""                   # GitLab: agent job ID token audience for an existing provider (default "fullsend")
+  service_account: ""                # GitLab: service account email the agent job impersonates (default none)
   openai:                            # OpenAI Workload Identity Federation (ADR 0092)
     audience: ""                     # OpenAI WIF audience
     identity_provider_id: ""         # OpenAI WIF identity provider ID
@@ -163,7 +166,16 @@ runtime comparison.
 
 Agent roles determine which GitHub Apps (and their associated credentials and
 permissions) are provisioned for the repository. Valid roles: `fullsend`,
-`triage`, `coder`, `review`, `fix`, `retro`, `prioritize`, `e2e`.
+`triage`, `coder`, `review`, `fix`, `retro`, `prioritize`, `e2e`. The `fix`
+role reuses the `coder` GitHub App and PEM, so no separate App or secret is
+created for it. For each role's GitHub App and purpose, see
+[Custom Agent Identity — Built-in roles](../guides/user/custom-agent-identity.md#built-in-roles).
+
+Mint-only dogfood roles such as `scribe` can be registered with
+`fullsend mint add-role` (and used via remote harness registration) but are
+**not** valid values for `roles` until scaffold and workflow wiring lands.
+Adding them under `roles` fails config validation rather than silently
+no-oping.
 
 In the layered config system, `roles` uses replace-if-set semantics — an
 overlay that sets `roles` replaces the parent list entirely (no union).
@@ -174,7 +186,7 @@ Omitting the key inherits the parent's roles. See
 
 Registered agent sources and per-agent tuning. Each entry identifies an agent
 by source URL or local path, with optional overrides for runtime, model,
-effort, and sub-agent models.
+effort, sub-agent models and the trigger.
 
 - **`source`** — URL (must include `#sha256=<64-hex-char>` integrity hash) or
   local path. URL sources must be covered by `allowed_remote_resources`.
@@ -194,6 +206,23 @@ effort, and sub-agent models.
   key sets the fallback for personas without an explicit entry. A `~` (null)
   value tombstones an inherited entry. Keys must be lowercase alphanumeric
   segments joined by hyphens (max 64 chars).
+- **`trigger`** — A [CEL trigger](../guides/user/cel-triggers-reference.md)
+  (a boolean over the normalized `event`). It decides routing for the
+  built-in review, retro, triage and prioritize agents only: on one of those
+  entries it opts the repository into CEL routing for that agent, so the
+  trigger, not the dispatch workflow's built-in rules, decides when the
+  agent's job starts (see
+  [Choosing when review runs](../guides/user/customizing-agents.md#choosing-when-review-runs),
+  [Choosing when retro runs](../guides/user/customizing-agents.md#choosing-when-retro-runs)
+  and
+  [Choosing when triage and prioritize run](../guides/user/customizing-agents.md#choosing-when-triage-and-prioritize-run)).
+  It does not change CEL dispatch: the harness `trigger:` keeps deciding when
+  custom agents run and what the Jira poller dispatches. A trigger alone
+  makes a valid override-only entry for a built-in agent. Validated when the
+  agent list is validated: it must compile and return a boolean. Like an
+  invalid `model` or `effort`, an invalid `trigger` makes every agent run in
+  the repository fail with `invalid agent config`, not only built-in routing, so
+  check the expression before you merge the change.
 
 In the layered config system, agents use keyed merge by `DerivedName()` — see
 [Layered Config Reference](../guides/infrastructure/layered-config-reference.md).
@@ -255,8 +284,9 @@ The only provider is `owners_file`:
 
 - An `approvers` entry in the repo-root `OWNERS` file gets write-level access
   (every slash command and custom agent). A `reviewers` entry gets
-  triage-level access, which covers `/fs-triage` and `/fs-review` only:
-  custom agents under `agents:` still require write.
+  triage-level access, which covers `/fs-triage`, `/fs-review`, and custom
+  agents whose harness sets `role: triage` or `role: review`. Custom agents
+  with any other `role:` still require write.
 - An entry that names a key in `OWNERS_ALIASES` stands for that alias's
   members. A GitHub login equal to any alias key never matches, and nested
   aliases are not expanded.
@@ -285,6 +315,61 @@ agents start and complete.
   an opt-in alternative that does not generate a GitHub notification.
 - **`reaction.completion`** — `enabled`, `on_failure`, or `disabled`
   (default).
+
+When `status_notifications` is omitted entirely, both start and completion
+comments default to enabled.
+
+**Completion comments.** `comment.completion` decides whether a comment is
+posted when the run ends:
+
+| Value | Behavior |
+|-------|----------|
+| `enabled` | Always post a completion comment (default) |
+| `on_failure` | Post when the agent fails, is cancelled, or is skipped by a pre-script; the start comment is automatically suppressed to avoid notification noise |
+| `disabled` | Never post a completion comment; silently remove the start comment |
+
+`on_failure` reduces notification noise: successful runs leave no trace, but
+failures still surface. With `on_failure`, the start comment is suppressed
+regardless of `comment.start`, because posting and then deleting a start
+comment would still trigger a GitHub notification pointing to a deleted
+comment.
+
+In `enabled` mode, a hard crash or cancellation that happens before the agent
+could post anything at all is also surfaced after the fact: a post-job cleanup
+step synthesizes an "Interrupted" comment so the run doesn't silently vanish.
+
+**Reactions.** Emoji reactions don't generate a GitHub notification, so they
+are a lower-noise way to show that an agent is working and how the run turned
+out. Unlike comments, they default to `disabled`. When `reaction.start` is
+enabled, a 👀 reaction is added when the agent begins. At completion, the start
+reaction (if any) is removed and, depending on `reaction.completion`, replaced
+with an outcome reaction:
+
+| Value | Behavior |
+|-------|----------|
+| `enabled` | Always add a completion reaction: 👍 on success, 😕 on failure/cancelled/skipped |
+| `on_failure` | Add a 😕 reaction only on failure/cancelled/skipped; leave no reaction on success |
+| `disabled` | Never add a completion reaction (default) |
+
+👎 is deliberately avoided for failures: it overloads GitHub's native
+up/down-vote convention, so a routine agent failure could be misread as the bot
+disliking the issue. Because reactions carry no notification cost,
+`on_failure` here only means "leave no reaction on success", with no
+start-suppression workaround.
+
+For runs triggered by an issue or PR event, the reaction is added to the
+issue or PR itself. For runs triggered by a slash command comment (for example
+`/fs-fix`), it is added to the triggering comment instead, so it's clear which
+command the reaction is responding to.
+
+Known limitations:
+
+- Reactions are currently GitHub-only. Enabling `reaction.*` on a
+  GitLab-backed repo is silently a no-op today
+  ([#5998](https://github.com/fullsend-ai/fullsend/issues/5998)).
+- If a run is hard-killed before it can post its completion reaction, the
+  start reaction (👀) can be left behind indefinitely. Unlike status comments,
+  there's no out-of-process reconciler for orphaned reactions yet.
 
 ### `mint_url`
 
@@ -326,6 +411,25 @@ flag is an error). See
 - **`region`** — GCP region for inference. Default: `global`.
 - **`wif_provider`** — Full Workload Identity Federation provider resource
   name. No default — must be provided by the installer.
+- **`wif_audience`** — GitLab `vertex-wif` only. The audience the GitLab
+  agent job requests for its ID token (`FULLSEND_ID_TOKEN`), for an existing
+  WIF provider that does not accept `fullsend`. `fullsend repos install`
+  renders it into `.gitlab/ci/fullsend-agent.yml`. Default: unset, which
+  keeps `aud: "fullsend"`. Must be a single line of printable ASCII with no
+  surrounding spaces and no `$`.
+- **`service_account`** — GitLab `vertex-wif` only. The email of a service
+  account the agent job impersonates after the federated token exchange
+  (`<name>@<project>.iam.gserviceaccount.com`). `fullsend repos install`
+  writes it as the `FULLSEND_GCP_SERVICE_ACCOUNT` CI/CD variable. Default:
+  unset, which keeps direct federated identity.
+
+  Both keys require an explicitly supplied `wif_provider` (or
+  `--vertex-wif-provider`) and are read only at install time. In `repos.yaml`,
+  set them under `gitlab.config` or on `gitlab.repos` entries: `github.config`
+  and `github.repos` entries reject them, and values inherited from
+  `defaults.config` are ignored on GitHub repositories and on GitLab
+  repositories that do not use `vertex-wif`. See
+  [Using an existing WIF provider](../guides/getting-started/configuring-gitlab.md#using-an-existing-wif-provider).
 - **`openai`** — OpenAI Workload Identity Federation identifiers
   ([ADR 0092](../ADRs/0092-openai-wif-credential-delivery.md)). The
   `FULLSEND_OPENAI_*` runner variables, when set, replace the resolved block

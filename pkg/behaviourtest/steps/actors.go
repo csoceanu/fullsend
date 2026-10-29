@@ -23,9 +23,20 @@ const (
 // actor name, for use inside a step pattern's capture group.
 const actorAlternation = actorWrite + "|" + actorTriage + "|" + actorOutsider
 
+// actorOpensPullRequestPattern optionally links the pull request to the
+// scenario's issue: "... opens a pull request linked to the issue" puts
+// a "Closes #<issue>" reference in its body.
+const actorOpensPullRequestPattern = `^the (` + actorAlternation + `) opens a pull request( linked to the issue)?$`
+
 func registerActorSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the (`+actorAlternation+`) posts "([^"]+)" on the issue$`, func(ctx context.Context, actor, body string) (context.Context, error) {
 		return ctx, whenActorPostsComment(world.FromContext(ctx), actor, body)
+	})
+	sc.Step(actorOpensPullRequestPattern, func(ctx context.Context, actor, linked string) (context.Context, error) {
+		return ctx, whenActorOpensPullRequest(world.FromContext(ctx), actor, linked != "")
+	})
+	sc.Step(`^the (`+actorAlternation+`) posts "([^"]+)" on the pull request$`, func(ctx context.Context, actor, body string) (context.Context, error) {
+		return ctx, whenActorPostsPRComment(world.FromContext(ctx), actor, body)
 	})
 	sc.Step(`^the comment "([^"]+)" on the issue is authored by the (`+actorAlternation+`)$`, func(ctx context.Context, body, actor string) (context.Context, error) {
 		return ctx, thenIssueCommentAuthoredBy(world.FromContext(ctx), body, actor)
@@ -94,6 +105,54 @@ func whenActorPostsComment(w *world.World, actor, body string) error {
 	return err
 }
 
+// whenActorOpensPullRequest opens a pull request as the named test actor,
+// so the PR author and the opened event's sender are a human with that
+// actor's repository role rather than the e2e installation identity (a
+// bot). When linkedToIssue is set, the PR body closes the scenario's
+// issue ("Closes #<issue>"). The PR and its branch are registered for
+// scenario cleanup.
+func whenActorOpensPullRequest(w *world.World, actor string, linkedToIssue bool) error {
+	actorSCM, _, err := actorIdentity(w, actor)
+	if err != nil {
+		return err
+	}
+	body := defaultPRBody
+	if linkedToIssue {
+		if w.IssueNumber == 0 {
+			return fmt.Errorf("no issue created; order the \"an issue\" step before linking a pull request to it")
+		}
+		body = fmt.Sprintf("%s\n\nCloses #%d", defaultPRBody, w.IssueNumber)
+	}
+	branch, err := openPullRequest(w, actorSCM, defaultPRPath, body)
+	if branch != "" {
+		w.CreatedBranches = append(w.CreatedBranches, branch)
+	}
+	if err != nil {
+		return err
+	}
+	w.CreatedPRNumbers = append(w.CreatedPRNumbers, w.PRNumber)
+	return nil
+}
+
+// whenActorPostsPRComment posts body on the scenario's pull request as the
+// named test actor. Slash commands from the e2e installation identity are
+// bot comments, which the dispatch shim drops; a human-like actor is needed
+// to dispatch from a pull request comment.
+func whenActorPostsPRComment(w *world.World, actor, body string) error {
+	actorSCM, _, err := actorIdentity(w, actor)
+	if err != nil {
+		return err
+	}
+	if w.PRNumber == 0 {
+		return fmt.Errorf("no pull request opened")
+	}
+	// Run created_at has second precision (#7957).
+	w.ScenarioStart = time.Now().Truncate(time.Second)
+	_, err = actorSCM.AddComment(context.Background(),
+		w.RepoOwner, w.RepoName, w.PRNumber, body)
+	return err
+}
+
 // thenIssueCommentAuthoredBy checks that the scenario's issue has a
 // comment with exactly body, and that every such comment was authored
 // by the named test actor's login. Comments are read through the
@@ -107,13 +166,9 @@ func thenIssueCommentAuthoredBy(w *world.World, body, actor string) error {
 	if login == "" {
 		return fmt.Errorf("%s login not resolved", actor)
 	}
-	if w.IssueNumber == 0 {
-		return fmt.Errorf("no issue created")
-	}
-	comments, err := w.SCM.ListComments(context.Background(),
-		w.RepoOwner, w.RepoName, w.IssueNumber)
+	comments, _, err := listTargetComments(w, targetIssue)
 	if err != nil {
-		return fmt.Errorf("listing comments on issue #%d: %w", w.IssueNumber, err)
+		return err
 	}
 	found := false
 	for _, c := range comments {

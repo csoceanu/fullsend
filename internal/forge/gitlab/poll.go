@@ -378,16 +378,6 @@ func (pc *PollClient) GetMergeRequest(ctx context.Context, owner, repo string, m
 	return &mr, nil
 }
 
-// CreatePipeline creates a new pipeline on the given ref with the given
-// variables. Returns the pipeline ID and web URL.
-func (pc *PollClient) CreatePipeline(ctx context.Context, owner, repo, ref string, variables map[string]string) (int64, string, error) {
-	p, err := pc.LiveClient.CreatePipeline(ctx, owner, repo, ref, variables)
-	if err != nil {
-		return 0, "", err
-	}
-	return p.ID, p.WebURL, nil
-}
-
 // CreatePipelineWithInputs creates a new pipeline on the given ref using
 // typed GitLab CI/CD pipeline inputs instead of user-defined pipeline
 // variables. Returns the pipeline ID and web URL.

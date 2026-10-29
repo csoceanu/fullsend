@@ -21,6 +21,12 @@ Date: 2026-10-01
 
 Accepted
 
+[ADR 0151](0151-harness-human-role-minimums.md) treats `human_min_role` as a
+guarded overlay field. Its ordered overlay outcome and effective value must be
+resolved from verified pre-admission facts and pinned before the harness's
+actor gate; the deprecated `forge:` block cannot set it. The other overlay
+rules remain current.
+
 [ADR 0150](0150-repository-less-agent-execution.md) adds `target_repo_required`
 to the top-level-only exceptions: it is resolved through base composition and
 cannot be set by `overlays:` or legacy `forge:` blocks. All other overlay

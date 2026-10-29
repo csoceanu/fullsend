@@ -71,6 +71,8 @@ type PerRepoConfigReader interface {
 	ConfigInferenceProject() string
 	ConfigInferenceRegion() string
 	ConfigInferenceWIFProvider() string
+	ConfigInferenceWIFAudience() string
+	ConfigInferenceServiceAccount() string
 	ConfigInferenceOpenAI() OpenAIWIFConfig
 	// ConfigInferenceGateway returns the effective inference.gateway
 	// block, layered field by field (ADR 0137).
@@ -112,6 +114,8 @@ type PerRepoConfigWriter interface {
 	SetInferenceProject(string)
 	SetInferenceRegion(string)
 	SetInferenceWIFProvider(string)
+	SetInferenceWIFAudience(string)
+	SetInferenceServiceAccount(string)
 	SetInferenceOpenAI(OpenAIWIFConfig)
 	SetInferenceGateway(InferenceGatewayConfig)
 	// MergeInferenceGateway layers the set fields of g over this layer's
@@ -204,6 +208,9 @@ func (c *perRepoConfig) AgentEntries() []AgentEntry {
 			}
 			if oi.entry.Effort != "" {
 				merged.Effort = oi.entry.Effort
+			}
+			if strings.TrimSpace(oi.entry.Trigger) != "" {
+				merged.Trigger = oi.entry.Trigger
 			}
 			// Subagents merge per key: overlay entries override or
 			// tombstone parent entries; unstated keys inherit.
@@ -456,6 +463,30 @@ func (c *perRepoConfig) ConfigInferenceWIFProvider() string {
 	return ""
 }
 
+// ConfigInferenceWIFAudience returns the GitLab agent job's ID token
+// audience for an existing WIF provider.
+func (c *perRepoConfig) ConfigInferenceWIFAudience() string {
+	if c.Inference != nil && c.Inference.WIFAudience != "" {
+		return c.Inference.WIFAudience
+	}
+	if c.parent != nil {
+		return c.parent.ConfigInferenceWIFAudience()
+	}
+	return ""
+}
+
+// ConfigInferenceServiceAccount returns the service account email the
+// GitLab agent job impersonates for Vertex inference.
+func (c *perRepoConfig) ConfigInferenceServiceAccount() string {
+	if c.Inference != nil && c.Inference.ServiceAccount != "" {
+		return c.Inference.ServiceAccount
+	}
+	if c.parent != nil {
+		return c.parent.ConfigInferenceServiceAccount()
+	}
+	return ""
+}
+
 // ConfigInferenceOpenAI returns the OpenAI WIF identifiers. Each of the
 // three resolves independently through the layers, like the other
 // inference scalars, so an overlay can restate one without the others.
@@ -593,6 +624,16 @@ func (c *perRepoConfig) SetStatusNotifications(sn *StatusNotificationConfig) {
 // SetInferenceWIFProvider sets the WIF provider resource name.
 func (c *perRepoConfig) SetInferenceWIFProvider(wifProvider string) {
 	c.ensureInference().WIFProvider = wifProvider
+}
+
+// SetInferenceWIFAudience sets the GitLab agent job's ID token audience.
+func (c *perRepoConfig) SetInferenceWIFAudience(audience string) {
+	c.ensureInference().WIFAudience = audience
+}
+
+// SetInferenceServiceAccount sets the service account email to impersonate.
+func (c *perRepoConfig) SetInferenceServiceAccount(email string) {
+	c.ensureInference().ServiceAccount = email
 }
 
 // SetModelAliases sets the per-repo model alias overrides; a nil or

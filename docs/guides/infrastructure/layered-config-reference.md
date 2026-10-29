@@ -147,6 +147,8 @@ the overlay → base → code defaults chain.
 | `inference.project` | `string` (nested) | Scalar override | `""` (empty) |
 | `inference.region` | `string` (nested) | Scalar override | `"global"` |
 | `inference.wif_provider` | `string` (nested) | Scalar override | `""` (empty) |
+| `inference.wif_audience` | `string` (nested) | Scalar override | `""` (empty; GitLab agent job keeps `aud: "fullsend"`) |
+| `inference.service_account` | `string` (nested) | Scalar override | `""` (empty; no impersonation) |
 | `inference.openai.audience` | `string` (nested) | Scalar override | `""` (empty) |
 | `inference.openai.identity_provider_id` | `string` (nested) | Scalar override | `""` (empty) |
 | `inference.openai.service_account_id` | `string` (nested) | Scalar override | `""` (empty) |
@@ -163,19 +165,20 @@ the overlay → base → code defaults chain.
 `authorization` is overlay-only: setting it in `config.base.yaml` has no
 effect, so each repo must opt in explicitly.
 
-### Per-agent `runtime`, `model`, `effort`, `subagents` on `agents:` entries
+### Per-agent `runtime`, `model`, `effort`, `subagents`, `trigger` on `agents:` entries
 
-An `agents:` entry may set `runtime`, `model`, `effort` and `subagents` for
-that agent. The `ref` field records the branch or tag that was resolved when
+An `agents:` entry may set `runtime`, `model`, `effort`, `subagents` and
+`trigger` for that agent. The `ref` field records the branch or tag that was resolved when
 the agent was adopted via `agent add`; `agent update` re-resolves against
 this ref instead of the default branch when it is present (empty for
 SHA-pinned or legacy entries).
 
 An enabled entry without `source:` is an *override-only* entry that tunes a
 built-in agent by name (or, in an overlay, a custom agent registered in the
-base layer). The keyed merge by `DerivedName()` carries the four settings
-field by field: for `runtime`, `model` and `effort` the overlay's non-empty
-value wins and an empty value inherits the parent's. `subagents` uses
+base layer). The keyed merge by `DerivedName()` carries the five settings
+field by field: for `runtime`, `model`, `effort` and `trigger` (a string)
+the overlay's non-empty value wins and an empty or omitted value inherits the
+parent's. `subagents` uses
 per-key merge: overlay entries override or tombstone (`~`) individual
 persona keys while unstated keys inherit from the parent. There is no way to
 unset a parent's scalar value from the overlay short of restating the entry.
@@ -237,8 +240,9 @@ unset (`""`) falls through to parent, then to code default
 
 **`inference`** groups inference backend settings under a single YAML key
 (`inference:`) using the `PerRepoInferenceConfig` struct. Each subfield
-(`provider`, `project`, `region`, `wif_provider`, and the three under
-`openai`) resolves independently through scalar override semantics:
+(`provider`, `project`, `region`, `wif_provider`, `wif_audience`,
+`service_account`, and the three under `openai`) resolves independently
+through scalar override semantics:
 
 - **`inference.provider`**: Inference provider identifier (e.g. `"vertex"`).
   Unset (`""`) falls through to parent, then to code default `"vertex"`.
@@ -248,6 +252,11 @@ unset (`""`) falls through to parent, then to code default
   through to parent, then to code default `"global"`.
 - **`inference.wif_provider`**: Full WIF provider resource name. Unset (`""`)
   falls through to parent (no code default — must be provided by the installer).
+- **`inference.wif_audience`** and **`inference.service_account`**: GitLab
+  `vertex-wif` options for an existing WIF provider, read by
+  `fullsend repos install`: the agent job's ID token audience and the service
+  account it impersonates. Unset (`""`) falls through to parent; with no
+  value the agent job keeps `aud: "fullsend"` and direct federation.
 - **`inference.openai.{audience,identity_provider_id,service_account_id}`**:
   the OpenAI Workload Identity identifiers for GPT on pi or codex (ADR 0092), written
   by `fullsend github setup --openai-*`; they can also come from configuration
@@ -512,9 +521,10 @@ backends. Currently one provider is supported:
   expanded.
 
 Both the bash routing path (built-in stages) and the Go harness-dispatch
-path (custom agents) consult OWNERS. The Go path admits write-level roles
-only, so a reviewer's triage-level grant covers built-in observation stages
-(`/fs-triage`, `/fs-review`) but not custom agents. A missing or malformed `OWNERS`
+path (custom agents) consult OWNERS. The Go path keys the threshold on the
+harness `role:`, so a reviewer's triage-level grant covers built-in
+observation stages (`/fs-triage`, `/fs-review`) and custom agents with
+`role: triage` or `role: review`; any other `role:` requires write. A missing or malformed `OWNERS`
 file, or a malformed `OWNERS_ALIASES` file, fails closed: the OWNERS check is
 skipped and authorization falls through to the collaborator API.
 
@@ -553,6 +563,8 @@ compiled-in defaults apply:
 | `inference.project` | `""` (empty — must be provided) |
 | `inference.region` | `"global"` |
 | `inference.wif_provider` | `""` (empty — must be provided) |
+| `inference.wif_audience` | `""` (empty — `aud: "fullsend"`) |
+| `inference.service_account` | `""` (empty — no impersonation) |
 | `models.aliases` | `nil` (fleet alias table compiled into the runtimes) |
 | `create_issues` | `nil` |
 | `status_notifications` | `nil` |

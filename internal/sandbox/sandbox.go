@@ -353,6 +353,28 @@ var gatewayDefaultFalseKeys = map[string]bool{
 	"allow_uninspected_credentials":   true,
 }
 
+// normalizeLocalBinaries rewrites, in place, the entries of the top-level
+// `binaries` list in the local profile from the object form
+// `{path: <string>}` to the scalar the gateway exports (OpenShell 0.1.2; see
+// #8754). An entry is rewritten only when it is an object holding exactly the
+// key `path` with a string value, so any other object shape still fails the
+// comparison. The gateway export is canonical and is never normalized.
+func normalizeLocalBinaries(doc map[string]any) {
+	list, ok := doc["binaries"].([]any)
+	if !ok {
+		return
+	}
+	for i, entry := range list {
+		obj, ok := entry.(map[string]any)
+		if !ok || len(obj) != 1 {
+			continue
+		}
+		if path, ok := obj["path"].(string); ok {
+			list[i] = path
+		}
+	}
+}
+
 // profileContentEqual reports whether the gateway's export of a profile
 // (exported) still carries the content of the local profile YAML document
 // (local). It is driven by the local file, not by knowledge of what OpenShell
@@ -374,6 +396,9 @@ var gatewayDefaultFalseKeys = map[string]bool{
 // a non-zero default; a new non-zero default OpenShell adds fails closed
 // rather than hiding a stale value.
 //
+// Before comparing, local `binaries` entries written as `{path: X}` are
+// rewritten to the scalar form the export uses (normalizeLocalBinaries).
+//
 // Unparseable input is an error, not a mismatch.
 func profileContentEqual(local, exported []byte) (bool, error) {
 	var localDoc map[string]any
@@ -389,6 +414,9 @@ func profileContentEqual(local, exported []byte) (bool, error) {
 	// file happens to carry a stale copy.
 	delete(localDoc, "resource_version")
 	delete(exportedDoc, "resource_version")
+
+	// The local binaries input form compares as the scalar the export writes.
+	normalizeLocalBinaries(localDoc)
 
 	// Top-level fields the export fills in with a non-zero default when the
 	// local file omits them. Only the exact default value is tolerated.
